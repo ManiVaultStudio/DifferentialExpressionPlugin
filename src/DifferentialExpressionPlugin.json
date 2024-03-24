@@ -1,0 +1,5 @@
+{
+    "name" : "Differential Expression View",
+    "version" : "1",
+    "dependencies" : ["Points"]
+}
