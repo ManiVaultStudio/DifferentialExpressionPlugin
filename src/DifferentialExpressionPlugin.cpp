@@ -353,7 +353,7 @@ void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
     // Load in dataset
     // ...
 
-    positionDatasetChanged();
+    //positionDatasetChanged();
 }
 
 QVariantMap DifferentialExpressionPlugin::toVariantMap() const
