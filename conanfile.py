@@ -1,6 +1,7 @@
 from conans import ConanFile
 from conan.tools.cmake import CMakeDeps, CMake, CMakeToolchain
 from conans.tools import save, load
+from conans.tools import os_info, SystemPackageTool
 import os
 import shutil
 import pathlib
@@ -18,7 +19,7 @@ class DifferentialExpressionPluginConan(ConanFile):
     """
 
     name = "DifferentialExpressionPlugin"
-    description = """Temporary plugin that has a button to refine an HSNE embedding"""
+    description = "A plugin for viewing differential expressions in the high-dimensional plugin system (HDPS)."
     topics = ("mv", "plugin", "view", "differential", "expression")
     url = "https://github.com/ManiVaultStudio/DifferentialExpressionPlugin"
     author = "B. van Lew b.van_lew@lumc.nl"  # conan recipe author
@@ -103,6 +104,12 @@ class DifferentialExpressionPluginConan(ConanFile):
             tc.variables["CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS"] = True
         if self.settings.os == "Linux" or self.settings.os == "Macos":
             tc.variables["CMAKE_CXX_STANDARD_REQUIRED"] = "ON"
+        prefix_path = qt_root
+        if os_info.is_macos:
+            proc = subprocess.run(
+                "brew --prefix libomp", shell=True, capture_output=True
+            )
+            prefix_path = prefix_path + f";{proc.stdout.decode('UTF-8').strip()}"
         tc.variables["CMAKE_PREFIX_PATH"] = qt_root
         tc.variables["USE_ARTIFACTORY_LIBS"] = "ON"
         
