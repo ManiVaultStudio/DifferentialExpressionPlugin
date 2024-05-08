@@ -110,7 +110,7 @@ class DifferentialExpressionPluginConan(ConanFile):
                 "brew --prefix libomp", shell=True, capture_output=True
             )
             prefix_path = prefix_path + f";{proc.stdout.decode('UTF-8').strip()}"
-        tc.variables["CMAKE_PREFIX_PATH"] = qt_root
+        tc.variables["CMAKE_PREFIX_PATH"] = prefix_path
         tc.variables["USE_ARTIFACTORY_LIBS"] = "ON"
         
         # Set the installation directory for ManiVault based on the MV_INSTALL_DIR environment variable
