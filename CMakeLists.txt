@@ -38,11 +38,39 @@ find_package(Qt6 COMPONENTS Widgets WebEngineWidgets REQUIRED)
 # Source files
 # -----------------------------------------------------------------------------
 # Define the plugin sources
+
+set(MODEL
+    src/TableModel.h
+    src/TableModel.cpp
+    src/TableSortFilterProxyModel.h
+    src/TableSortFilterProxyModel.cpp
+)
+
+set(WIDGETS
+    
+    src/WordWrapHeaderView.h
+    src/WordWrapHeaderView.cpp
+    src/TableView.h
+    src/TableView.cpp
+    src/ButtonProgressBar.h
+    src/ButtonProgressBar.cpp
+)
+
+set(UTIL
+    src/ProgressManager.h
+    src/ProgressManager.cpp
+)
+
+set(ACTIONS
+    src/LoadedDatasetsAction.h
+    src/LoadedDatasetsAction.cpp
+    src/MultiTriggerAction.h
+    src/MultiTriggerAction.cpp
+)
 set(PLUGIN_SOURCES
     src/DifferentialExpressionPlugin.h
     src/DifferentialExpressionPlugin.cpp
-    src/LoadedDatasetsAction.h
-    src/LoadedDatasetsAction.cpp
+   
     src/DifferentialExpressionPlugin.json
 )
 
@@ -53,15 +81,33 @@ QT6_ADD_RESOURCES(RESOURCE_FILES ${QRESOURCES})
 
 set(PLUGIN_MOC_HEADERS
     src/DifferentialExpressionPlugin.h
+
+    src/ButtonProgressBar.h
+    src/TableModel.h
+    src/TableSortFilterProxyModel.h
+    src/TableView.h
+    src/WordWrapHeaderView.h
 )
 
-source_group( Plugin FILES ${PLUGIN_SOURCES})
-
+source_group(Plugin FILES ${PLUGIN_SOURCES})
+source_group(Model FILES ${MODEL})
+source_group(Actions FILES ${ACTIONS})
+source_group(Widget FILES ${WIDGETS})
+source_group(Util FILES ${UTIL})
 # -----------------------------------------------------------------------------
 # CMake Target
 # -----------------------------------------------------------------------------
 # Create dynamic library for the plugin
-add_library(${PROJECT_NAME} SHARED ${PLUGIN_SOURCES} ${RESOURCE_FILES})
+add_library(${PROJECT_NAME} SHARED ${PLUGIN_SOURCES} ${RESOURCE_FILES} ${UTIL} ${WIDGETS} ${MODEL} ${ACTIONS})
+
+find_package(OpenMP REQUIRED)
+if(OpenMP_FOUND)
+	message(STATUS "OpenMP found")
+	target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+	target_compile_options(${PROJECT_NAME} PRIVATE ${OpenMP_CXX_FLAGS})
+else()
+   message(WARNING "OpenMP not found!")
+endif()
 
 qt_wrap_cpp(PLUGIN_MOC ${PLUGIN_MOC_HEADERS} TARGET ${PROJECT_NAME})
 target_sources(${PROJECT_NAME} PRIVATE ${PLUGIN_MOC})

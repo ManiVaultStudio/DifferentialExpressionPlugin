@@ -3,15 +3,19 @@
 #include <ViewPlugin.h>
 
 #include "LoadedDatasetsAction.h"
+#include "MultiTriggerAction.h"
 
 #include <Dataset.h>
 #include <widgets/DropWidget.h>
 
 #include <PointData/PointData.h>
 
-#include <QWidget>
+
 #include <QTableWidget>
-#include <QStringList>
+#include "TableSortFilterProxyModel.h"
+#include "TableModel.h"
+#include "TableView.h"
+#include "ButtonProgressBar.h"
 
 /** All plugin related classes are in the ManiVault plugin namespace */
 using namespace mv::plugin;
@@ -48,6 +52,8 @@ public:
      */
     void onDataEvent(mv::DatasetEvent* dataEvent);
 
+
+    void setPositionDataset(mv::Dataset<Points> newPoints);
     /** Invoked when the position points dataset changes */
     void positionDatasetChanged();
 
@@ -68,19 +74,42 @@ public: // Serialization
     */
     QVariantMap toVariantMap() const override;
 
+protected slots:
+    void writeToCSV() const;
+    void computeDE();
+    
+    void tableView_clicked(const QModelIndex& index);
+    void tableView_selectionChanged(const QItemSelection& selected, const QItemSelection& deselected);
+
+
 protected:
     DropWidget*             _dropWidget;                /** Widget for drag and drop behavior */
     mv::Dataset<Points>     _points;                    /** Points smart pointer */
     QString                 _currentDatasetName;        /** Name of the current dataset */
     QLabel*                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
 
-    QPushButton*            _setFirstSelectionButton;
-    QPushButton*            _setSecondSelectionButton;
-    QPushButton*            _computeDiffExprButton;
-    QTableWidget*           _tableWidget;
+    MultiTriggerAction      _selectionTriggerActions;
+    QLabel                  _selectedCellsLabel[MultiTriggerAction::Size];
+   
+    
+   
     QStringList             _geneList;
 
     LoadedDatasetsAction    _loadedDatasetsAction;
+
+    TriggerAction                       _updateStatisticsAction;
+    StringAction                        _filterOnIdAction;
+    StringAction                         _selectedIdAction;
+    QSharedPointer<TableModel>     _tableItemModel;
+    QPointer<TableSortFilterProxyModel>      _sortFilterProxyModel;
+    TableView*                          _tableView;
+    QPointer<ButtonProgressBar>         _buttonProgressBar;
+    TriggerAction                       _copyToClipboardAction;
+    TriggerAction                       _saveToCsvAction;
+
+    QVector<WidgetAction*>              _serializedActions;
+    QByteArray                          _headerState;
+
 
     std::vector<QTableWidgetItem*> _geneTableItems;
     std::vector<QTableWidgetItem*> _diffTableItems;

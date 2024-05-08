@@ -16,7 +16,12 @@ LoadedDatasetsAction::LoadedDatasetsAction(QObject* parent, const QString& title
     setToolTip("Manage loaded datasets for position");
 
     _positionDatasetPickerAction.setFilterFunction([](const mv::Dataset<DatasetImpl>& dataset) -> bool {
-        return dataset->getDataType() == PointType;
+        if(dataset->getDataType() == PointType)
+        {
+            Dataset<Points> pointDataset = dataset;
+            return (pointDataset->getSparseData().getValues().size() > 0);
+        }
+        return false;
     });
 }
 
