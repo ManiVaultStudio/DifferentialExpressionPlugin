@@ -70,30 +70,52 @@ namespace local
         task.setProgressDescription(description);
         task.setProgressMode(Task::ProgressMode::Subtasks);
         task.setRunning();
-        
-        const auto& _rowPointers = points->getSparseData().getIndexPointers();
-        const auto& _colIndices = points->getSparseData().getColIndices();
-        const auto& _values = points->getSparseData().getValues();
-       
-        const auto _numCols = points->getSparseData().getNumCols();
-        const auto _numRows = points->getSparseData().getNumRows();
 
-        task.setSubtasks(_numRows);
-        for (std::size_t r = 0; r < _numRows; ++r)
+        if (points->getSparseData().getValues().size())
         {
-            const size_t nzEnd = _rowPointers[r + 1];
-            
-            for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
+            const auto& _rowPointers = points->getSparseData().getIndexPointers();
+            const auto& _colIndices = points->getSparseData().getColIndices();
+            const auto& _values = points->getSparseData().getValues();
+
+            const auto _numCols = points->getSparseData().getNumCols();
+            const auto _numRows = points->getSparseData().getNumRows();
+
+            task.setSubtasks(_numRows);
+            for (std::size_t r = 0; r < _numRows; ++r)
             {
-                const auto value = _values[nzIndex];
-                const auto column = _colIndices[nzIndex];
-                functionObject(r, column, value);
-            }
-            
+                const size_t nzEnd = _rowPointers[r + 1];
+
+                for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
+                {
+                    const auto value = _values[nzIndex];
+                    const auto column = _colIndices[nzIndex];
+                    functionObject(r, column, value);
+                }
+
                 task.subtaskFinished(r);
-        }
-        
+            }
+
             task.setFinished();
+        }
+        else
+        {
+            const auto numDimensions = points->getNumDimensions();
+            const auto numRows = points->getNumPoints();
+            points->visitData([numRows, &task, numDimensions, functionObject](auto data)
+                {
+                    task.setSubtasks(numRows);
+                    for (std::size_t r = 0; r < numRows; ++r)
+                    {
+                        for (std::size_t column = 0; column < numDimensions; ++column)
+                        {
+                            const auto value = data[r][column];
+                            functionObject(r, column, value);
+                        }
+                        task.subtaskFinished(r);
+                    }
+                    task.setFinished();
+                });
+        }
     }
     template <typename RowRange, typename FunctionObject>
     void visitElements(Dataset<Points> points, const RowRange& rows, FunctionObject functionObject, const QString &description)
@@ -103,27 +125,51 @@ namespace local
         task.setProgressDescription(description);
         task.setProgressMode(Task::ProgressMode::Subtasks);
         task.setRunning();
-       
-        const auto& _rowPointers = points->getSparseData().getIndexPointers();
-        const auto& _colIndices = points->getSparseData().getColIndices();
-        const auto& _values = points->getSparseData().getValues();
-        
-        auto _numCols = points->getSparseData().getNumCols();
-        
-        task.setSubtasks(rows.size());
-        for (const auto r : rows)
-        {
-            const size_t nzEnd = _rowPointers[r + 1];
-            for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
-            {
-                const auto value = _values[nzIndex];
-                const auto column = _colIndices[nzIndex];
-                functionObject(r, column, value);
-            }
 
-            task.subtaskFinished(r);
+        if(points->getSparseData().getValues().size())
+        {
+            const auto& _rowPointers = points->getSparseData().getIndexPointers();
+            const auto& _colIndices = points->getSparseData().getColIndices();
+            const auto& _values = points->getSparseData().getValues();
+
+            auto _numCols = points->getSparseData().getNumCols();
+
+            task.setSubtasks(rows.size());
+            for (const auto r : rows)
+            {
+                const size_t nzEnd = _rowPointers[r + 1];
+                for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
+                {
+                    const auto value = _values[nzIndex];
+                    const auto column = _colIndices[nzIndex];
+                    functionObject(r, column, value);
+                }
+
+                task.subtaskFinished(r);
+            }
+            task.setFinished();
         }
-        task.setFinished();
+        else
+        {
+            const auto numDimensions = points->getNumDimensions();
+            points->visitData([&rows, &task, numDimensions, functionObject](auto data)
+                {
+                    task.setSubtasks(rows.size());
+                    for (const auto r : rows)
+                    {
+                        for(std::size_t column = 0; column < numDimensions; ++column)
+                        {
+                            const auto value = data[r][column];
+                            functionObject(r, column, value);
+                        }
+                        task.subtaskFinished(r);
+                    }
+                    task.setFinished();
+                });
+            
+        }
+
+        
             
     }
 }
@@ -312,30 +358,22 @@ void DifferentialExpressionPlugin::init()
 
                 auto candidateDataset = mv::data().getDataset<Points>(datasetId);
 
-                if (candidateDataset->getSparseData().getValues().size() == 0)
-                {
-                    dropRegions << new DropWidget::DropRegion(this, "Incompatible data", "This type of data is not supported", "exclamation-circle", false);
-                    qDebug() << "Incompatible data" << ": " << "This type of data is not supported";
+                const auto description = QString("Load %1 into example view").arg(datasetGuiName);
+
+                if (_points == candidateDataset) {
+
+                    // Dataset cannot be dropped because it is already loaded
+                    dropRegions << new DropWidget::DropRegion(this, "Warning", "Data already loaded", "exclamation-circle", false);
+                    qDebug() << "Warning" << ": " << "Data already loaded";
                 }
-                else
-                {
-                    const auto description = QString("Load %1 into example view").arg(datasetGuiName);
+                else {
 
-                    if (_points == candidateDataset) {
+                    // Dataset can be dropped
+                    dropRegions << new DropWidget::DropRegion(this, "Points", description, "map-marker-alt", true, [this, candidateDataset]() {
 
-                        // Dataset cannot be dropped because it is already loaded
-                        dropRegions << new DropWidget::DropRegion(this, "Warning", "Data already loaded", "exclamation-circle", false);
-                        qDebug() << "Warning" << ": " << "Data already loaded";
-                    }
-                    else {
+                        setPositionDataset(candidateDataset);
 
-                        // Dataset can be dropped
-                        dropRegions << new DropWidget::DropRegion(this, "Points", description, "map-marker-alt", true, [this, candidateDataset]() {
-
-                            setPositionDataset(candidateDataset);
-
-                            });
-                    }
+                        });
                 }
             }
         }
@@ -416,8 +454,8 @@ void DifferentialExpressionPlugin::init()
             
 
             // first compute the sum of values per dimension for selectionA and selectionB
-        
-            local::visitElements(_points,selectionA, [&meanA](auto row, auto column, auto value)
+
+            local::visitElements(_points, selectionA, [&meanA](auto row, auto column, auto value)
                 {
                     meanA[column] += value;
                 }, QString("Computing mean expression values for Selection 1"));
@@ -426,6 +464,8 @@ void DifferentialExpressionPlugin::init()
                 {
                     meanB[column] += value;
                 }, QString("Computing mean expression values for Selection 2"));
+
+            
 
 
 #pragma omp parallel for schedule(dynamic,1)

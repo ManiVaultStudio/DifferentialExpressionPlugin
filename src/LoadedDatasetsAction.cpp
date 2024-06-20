@@ -18,8 +18,7 @@ LoadedDatasetsAction::LoadedDatasetsAction(QObject* parent, const QString& title
     _positionDatasetPickerAction.setFilterFunction([](const mv::Dataset<DatasetImpl>& dataset) -> bool {
         if(dataset->getDataType() == PointType)
         {
-            Dataset<Points> pointDataset = dataset;
-            return (pointDataset->getSparseData().getValues().size() > 0);
+            return true;
         }
         return false;
     });
