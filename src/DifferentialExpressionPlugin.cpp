@@ -71,7 +71,7 @@ namespace local
         task.setProgressMode(Task::ProgressMode::Subtasks);
         task.setRunning();
 
-        if (points->getSparseData().getValues().size())
+       /* if (points->getSparseData().getValues().size())
         {
             const auto& _rowPointers = points->getSparseData().getIndexPointers();
             const auto& _colIndices = points->getSparseData().getColIndices();
@@ -98,7 +98,7 @@ namespace local
             task.setFinished();
         }
         else
-        {
+        {*/
             const auto numDimensions = points->getNumDimensions();
             const auto numRows = points->getNumPoints();
             points->visitData([numRows, &task, numDimensions, functionObject](auto data)
@@ -115,7 +115,7 @@ namespace local
                     }
                     task.setFinished();
                 });
-        }
+        //}
     }
     template <typename RowRange, typename FunctionObject>
     void visitElements(Dataset<Points> points, const RowRange& rows, FunctionObject functionObject, const QString &description)
@@ -126,7 +126,7 @@ namespace local
         task.setProgressMode(Task::ProgressMode::Subtasks);
         task.setRunning();
 
-        if(points->getSparseData().getValues().size())
+        /*if(points->getSparseData().getValues().size())
         {
             const auto& _rowPointers = points->getSparseData().getIndexPointers();
             const auto& _colIndices = points->getSparseData().getColIndices();
@@ -150,7 +150,7 @@ namespace local
             task.setFinished();
         }
         else
-        {
+        {*/
             const auto numDimensions = points->getNumDimensions();
             points->visitData([&rows, &task, numDimensions, functionObject](auto data)
                 {
@@ -167,7 +167,7 @@ namespace local
                     task.setFinished();
                 });
             
-        }
+        //}
 
         
             
@@ -521,7 +521,7 @@ void DifferentialExpressionPlugin::init()
     _eventListener.registerDataEventByType(PointType, std::bind(&DifferentialExpressionPlugin::onDataEvent, this, std::placeholders::_1));
 
     // Read gene list
-    QFile inputFile(":gene_symbols.csv");
+    /*QFile inputFile(":gene_symbols.csv");
     if (inputFile.open(QIODevice::ReadOnly))
     {
         QTextStream in(&inputFile);
@@ -538,7 +538,7 @@ void DifferentialExpressionPlugin::init()
     {
         qWarning() << "Genelist file was not found at location.";
     }
-    qDebug() << "Loaded " << _geneList.size() << " genes.";
+    qDebug() << "Loaded " << _geneList.size() << " genes.";*/
 }
 
 void DifferentialExpressionPlugin::onDataEvent(mv::DatasetEvent* dataEvent)
@@ -598,8 +598,15 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
     // Do not show the drop indicator if there is a valid point positions dataset
     _dropWidget->setShowDropIndicator(!_points.isValid());
 
-    
-    
+    // Get gene list
+    _geneList.clear();
+    std::vector<QString> geneNames = _points->getDimensionNames();
+    for (int i = 0; i < geneNames.size(); i++)
+    {
+        _geneList.append(geneNames[i]);
+    }
+    qDebug() << "Loaded " << _geneList.size() << " genes.";
+
     // Compute normalization
     auto numDimensions = _points->getNumDimensions();
 
