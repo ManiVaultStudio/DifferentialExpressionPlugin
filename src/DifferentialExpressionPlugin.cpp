@@ -466,8 +466,11 @@ void DifferentialExpressionPlugin::init()
                 }, QString("Computing mean expression values for Selection 2"));
 
             
-
-
+            auto dimensionNames = _points->getDimensionNames();
+            if(dimensionNames.size() < numDimensions)
+            {
+                dimensionNames.resize(numDimensions, "placeholder");
+            }
 #pragma omp parallel for schedule(dynamic,1)
             for (std::ptrdiff_t d = 0; d < numDimensions; d++)
             {
@@ -485,7 +488,7 @@ void DifferentialExpressionPlugin::init()
             for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
             {
                 std::vector<QVariant> dataVector(totalColumnCount);
-                dataVector[0] = _geneList[dimension];
+                dataVector[0] = dimensionNames[dimension];
 
                 dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 2);
                 dataVector[2] = local::fround(meanA[dimension], 2);
@@ -519,7 +522,7 @@ void DifferentialExpressionPlugin::init()
     _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetRemoved));
     _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetDataSelectionChanged));
     _eventListener.registerDataEventByType(PointType, std::bind(&DifferentialExpressionPlugin::onDataEvent, this, std::placeholders::_1));
-
+    /*
     // Read gene list
     QFile inputFile(":gene_symbols.csv");
     if (inputFile.open(QIODevice::ReadOnly))
@@ -539,6 +542,7 @@ void DifferentialExpressionPlugin::init()
         qWarning() << "Genelist file was not found at location.";
     }
     qDebug() << "Loaded " << _geneList.size() << " genes.";
+    */
 }
 
 void DifferentialExpressionPlugin::onDataEvent(mv::DatasetEvent* dataEvent)

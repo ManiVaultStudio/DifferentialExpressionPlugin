@@ -74,10 +74,10 @@ set(PLUGIN_SOURCES
     src/DifferentialExpressionPlugin.json
 )
 
-set(QRESOURCES
-    res/resources.qrc
-)
-QT6_ADD_RESOURCES(RESOURCE_FILES ${QRESOURCES})
+#set(QRESOURCES
+#    res/resources.qrc
+#)
+#QT6_ADD_RESOURCES(RESOURCE_FILES ${QRESOURCES})
 
 set(PLUGIN_MOC_HEADERS
     src/DifferentialExpressionPlugin.h

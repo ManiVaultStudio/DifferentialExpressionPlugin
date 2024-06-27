@@ -93,7 +93,7 @@ protected:
    
     
    
-    QStringList             _geneList;
+    //QStringList             _geneList;
 
     LoadedDatasetsAction    _loadedDatasetsAction;
 
