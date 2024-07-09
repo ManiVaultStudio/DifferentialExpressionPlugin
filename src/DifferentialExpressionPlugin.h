@@ -88,14 +88,12 @@ private: // for computing using single cell averages
 private: 
     // Single cell data
     mv::Dataset<Points>                _avgExprDataset;          // Point dataset for average expression of each cluster
+    bool                               _isSingleCell = false;    // True if checkbox is checked
     std::vector<QString>               _geneNamesAvgExpr;        // From avg expr single cell data    
-    bool                               _isSingleCell = false;    
-
     std::vector<QString>               _clusterNamesAvgExpr;     // From avg expr single cell data
     std::unordered_map<QString, int>   _clusterAliasToRowMap;    // Map label (QString) to row index in _avgExpr
     std::vector<QString>               _cellLabels;              // Labels for each point
     QStringList                        _geneListSC;
-
     ToggleAction                       _singlecellAction;
     
 

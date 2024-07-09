@@ -735,6 +735,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
 void DifferentialExpressionPlugin::loadAvgExpression() {
     qDebug() << "loadAvgExpression(): start... ";
+
     std::ifstream file;
 
     // temporary code to load avg expression from file TO DO: generalize to select file from GUI
@@ -834,7 +835,7 @@ void DifferentialExpressionPlugin::loadAvgExpression() {
 
     if (!_avgExprDataset.isValid()) {
         qDebug() << "Create an avgExprDataset";
-        _avgExprDataset = mv::data().createDataset<Points>("Points", "avgExprDatasetTest");
+        _avgExprDataset = mv::data().createDataset<Points>("Points", "avgExprDatasetForDiff");
         events().notifyDatasetAdded(_avgExprDataset);
     }
 
