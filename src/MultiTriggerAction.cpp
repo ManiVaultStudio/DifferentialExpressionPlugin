@@ -2,9 +2,9 @@
 
 #include <QMenu>
 
-MultiTriggerAction::MultiTriggerAction(QObject* object, const QString& title, const QString& trigger_title)
-: GroupAction(object,title,true)
-, _triggerAction()
+MultiTriggerAction::MultiTriggerAction(QObject* object, const QString& title, const QString& trigger_title):
+    GroupAction(object,title,true),
+    _triggerAction()
 {
     int id = 1;
     for (auto &action : _triggerAction)
