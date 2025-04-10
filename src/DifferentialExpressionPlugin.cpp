@@ -205,7 +205,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     { // copy to Clipboard
        
         //addTitleBarMenuAction(&_saveToCsvAction);
-        _saveToCsvAction.setIcon(Application::getIconFont("FontAwesome").getIcon("file-csv"));
+        _saveToCsvAction.setIcon(mv::util::StyledIcon("file-csv"));
         _saveToCsvAction.setShortcut(tr("Ctrl+S"));
         _saveToCsvAction.setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
@@ -217,7 +217,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     { // copy to Clipboard
       
        // addTitleBarMenuAction(&_copyToClipboardAction);
-        _copyToClipboardAction.setIcon(Application::getIconFont("FontAwesome").getIcon("copy"));
+        _copyToClipboardAction.setIcon(mv::util::StyledIcon("copy"));
         _copyToClipboardAction.setShortcut(tr("Ctrl+C"));
         _copyToClipboardAction.setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
@@ -1140,7 +1140,7 @@ mv::gui::PluginTriggerActions DifferentialExpressionPluginFactory::getPluginTrig
     const auto numberOfDatasets = datasets.count();
 
     if (numberOfDatasets >= 1 && PluginFactory::areAllDatasetsOfTheSameType(datasets, PointType)) {
-        auto pluginTriggerAction = new PluginTriggerAction(const_cast<DifferentialExpressionPluginFactory*>(this), this, "Example", "View example data", getIcon(), [this, getPluginInstance, datasets](PluginTriggerAction& pluginTriggerAction) -> void {
+        auto pluginTriggerAction = new PluginTriggerAction(const_cast<DifferentialExpressionPluginFactory*>(this), this, "Example", "View example data", StyledIcon(), [this, getPluginInstance, datasets](PluginTriggerAction& pluginTriggerAction) -> void {
             for (auto dataset : datasets)
                 getPluginInstance();
         });

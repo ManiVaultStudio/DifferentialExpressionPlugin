@@ -12,7 +12,7 @@ LoadedDatasetsAction::LoadedDatasetsAction(QObject* parent, const QString& title
     GroupAction(parent, "Loaded datasets"),
     _positionDatasetPickerAction(this, "Position")
 {
-    setIcon(mv::Application::getIconFont("FontAwesome").getIcon("database"));
+    setIcon(mv::util::StyledIcon("database"));
     setToolTip("Manage loaded datasets for position");
 
     _positionDatasetPickerAction.setFilterFunction([](const mv::Dataset<DatasetImpl>& dataset) -> bool {
