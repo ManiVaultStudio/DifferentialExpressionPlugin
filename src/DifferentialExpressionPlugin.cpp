@@ -727,8 +727,8 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
     qDebug() << rescaleValues[1] << minValues[1];
 
     // load avg expression
-    loadAvgExpression();
-    loadLabelsFromSTDataset();
+    //loadAvgExpression();
+    //loadLabelsFromSTDataset();
 
 
 }
