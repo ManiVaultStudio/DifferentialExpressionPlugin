@@ -599,6 +599,13 @@ void DifferentialExpressionPlugin::onDataEvent(mv::DatasetEvent* dataEvent)
 
 void DifferentialExpressionPlugin::setPositionDataset(mv::Dataset<Points> newPoints)
 {
+    if (!newPoints.isValid())
+    {
+        qDebug() << "DifferentialExpressionPlugin Warning: invalid dataset!";
+        return;
+    }
+        
+
     auto pointDatasets = mv::data().getAllDatasets(std::vector<mv::DataType> {PointType});
     /*
     if(_points.isValid())
