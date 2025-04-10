@@ -160,7 +160,7 @@ class DifferentialExpressionPluginFactory : public ViewPluginFactory
 public:
 
     /** Default constructor */
-    DifferentialExpressionPluginFactory() {}
+    DifferentialExpressionPluginFactory();
 
     /** Destructor */
     ~DifferentialExpressionPluginFactory() override {}

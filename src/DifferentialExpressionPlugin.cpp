@@ -1113,6 +1113,15 @@ void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelecti
     tableView_clicked(selected.indexes().first());
 }
 
+/******************************************************************************
+ * Plugin Factory
+ ******************************************************************************/
+
+DifferentialExpressionPluginFactory::DifferentialExpressionPluginFactory()
+{
+    setIconByName("table");
+}
+
 
 ViewPlugin* DifferentialExpressionPluginFactory::produce()
 {
