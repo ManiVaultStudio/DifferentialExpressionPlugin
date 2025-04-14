@@ -256,6 +256,9 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
             _updateStatisticsAction.trigger();
         });
 
+    // FIXME: hardcode to disable singlecell option
+    _singlecellAction.setEnabled(false);
+
     _serializedActions.append(&_loadedDatasetsAction);
     _serializedActions.append(&_selectedIdAction);
     _serializedActions.append(&_filterOnIdAction);
