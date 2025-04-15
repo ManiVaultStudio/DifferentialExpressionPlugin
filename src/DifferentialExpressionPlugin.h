@@ -75,15 +75,6 @@ public: // Serialization
     */
     QVariantMap toVariantMap() const override;
 
-private: // for computing using single cell averages
-    void loadAvgExpression();
-
-    void loadLabelsFromSTDataset();
-
-    std::pair<std::vector<int>, std::vector<float>> countLabelDistribution(std::vector<uint32_t>& indices);
-
-    void sumAndAverage(const std::vector<int>& indices, const std::vector<float>& counts, Dataset<Points> dataset, std::vector<float>& mean);
-
 
 private: 
     // Single cell data
@@ -94,7 +85,6 @@ private:
     std::unordered_map<QString, int>   _clusterAliasToRowMap;    // Map label (QString) to row index in _avgExpr
     std::vector<QString>               _cellLabels;              // Labels for each point
     QStringList                        _geneListSC;
-    ToggleAction                       _singlecellAction;
     
 
 protected slots:
@@ -112,9 +102,7 @@ protected:
     QLabel*                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
 
     MultiTriggerAction      _selectionTriggerActions;
-    QLabel                  _selectedCellsLabel[MultiTriggerAction::Size];
-   
-    
+    QLabel                  _selectedCellsLabel[MultiTriggerAction::Size];  
    
     QStringList             _geneList;
 

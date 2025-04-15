@@ -193,8 +193,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _tableView(nullptr),
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
-    _saveToCsvAction(&getWidget(), "Save As..."),
-    _singlecellAction(this, "Use scRNA-seq genes")
+    _saveToCsvAction(&getWidget(), "Save As...")
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
@@ -241,23 +240,9 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
             _tableItemModel->invalidate();
         });
 
-
     connect(&_filterOnIdAction, &mv::gui::StringAction::stringChanged, _sortFilterProxyModel, &TableSortFilterProxyModel::nameFilterChanged);
 
     connect(&_updateStatisticsAction, &mv::gui::TriggerAction::triggered, this, &DifferentialExpressionPlugin::computeDE);
-
-    connect(&_singlecellAction, &mv::gui::ToggleAction::toggled, this, [this]()
-        {
-            if (_singlecellAction.isChecked())
-                _isSingleCell = true;
-            else
-                _isSingleCell = false;
-
-            _updateStatisticsAction.trigger();
-        });
-
-    // FIXME: hardcode to disable singlecell option
-    _singlecellAction.setEnabled(false);
 
     _serializedActions.append(&_loadedDatasetsAction);
     _serializedActions.append(&_selectedIdAction);
@@ -289,7 +274,7 @@ void DifferentialExpressionPlugin::init()
         
         QHBoxLayout* toolBarLayout = new QHBoxLayout;
         toolBarLayout->addWidget(filterWidget, 8);
-        toolBarLayout->addWidget(_singlecellAction.createWidget(&mainWidget), 2);
+
 
         layout->addLayout(toolBarLayout);
     }
@@ -452,7 +437,7 @@ void DifferentialExpressionPlugin::init()
                 _buttonProgressBar->showStatus(TableModel::Status::OutDated);
         });
 
-    connect(&_updateStatisticsAction, &TriggerAction::triggered,  [this](const bool&)
+    connect(&_updateStatisticsAction, &TriggerAction::triggered, [this](const bool&)
         {
             if (!_points.isValid())
                 return;
@@ -463,90 +448,52 @@ void DifferentialExpressionPlugin::init()
             // Compute differential expr
             qDebug() << "Computing differential expression.";
 
-            // ST
-            if (!_isSingleCell)
-            {
-                std::ptrdiff_t numDimensions = _points->getNumDimensions();
-                std::vector<float> meanA(numDimensions, 0);
-                std::vector<float> meanB(numDimensions, 0);
+            std::ptrdiff_t numDimensions = _points->getNumDimensions();
+            std::vector<float> meanA(numDimensions, 0);
+            std::vector<float> meanB(numDimensions, 0);
 
-                // first compute the sum of values per dimension for selectionA and selectionB
-                local::visitElements(_points, selectionA, [&meanA](auto row, auto column, auto value)
-                    {
-                        meanA[column] += value;
-                    }, QString("Computing mean expression values for Selection 1"));
+            // first compute the sum of values per dimension for selectionA and selectionB
+            local::visitElements(_points, selectionA, [&meanA](auto row, auto column, auto value)
+                {
+                    meanA[column] += value;
+                }, QString("Computing mean expression values for Selection 1"));
 
-                local::visitElements(_points, selectionB, [&meanB](auto row, auto column, auto value)
-                    {
-                        meanB[column] += value;
-                    }, QString("Computing mean expression values for Selection 2"));
+            local::visitElements(_points, selectionB, [&meanB](auto row, auto column, auto value)
+                {
+                    meanB[column] += value;
+                }, QString("Computing mean expression values for Selection 2"));
 
 
 #pragma omp parallel for schedule(dynamic,1)
-                for (std::ptrdiff_t d = 0; d < numDimensions; d++)
-                {
-                    // first divide means by number of rows
-                    meanA[d] /= selectionA.size();
-                    meanB[d] /= selectionB.size();
-
-                    // then min max
-                    //meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
-                    //meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
-                }
-                int totalColumnCount = 4;
-                _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
-#pragma omp  parallel for schedule(dynamic,1)
-                for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
-                {
-                    std::vector<QVariant> dataVector(totalColumnCount);
-                    dataVector[0] = _geneList[dimension];
-
-                    dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 2);
-                    dataVector[2] = local::fround(meanA[dimension], 2);
-                    dataVector[3] = local::fround(meanB[dimension], 2);
-                    _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
-                }
-                _tableItemModel->setHorizontalHeader(0, QString("ID"));
-                _tableItemModel->setHorizontalHeader(1, QString("Differential Expression"));
-                _tableItemModel->setHorizontalHeader(2, QString("Mean Selection 1\n(%1 cells)").arg(selectionA.size()));
-                _tableItemModel->setHorizontalHeader(3, QString("Mean Selection 2\n(%1 cells)").arg(selectionB.size()));
-                _tableItemModel->endModelBuilding();
-            }
-
-            
-            // SC
-            if (_isSingleCell)
+            for (std::ptrdiff_t d = 0; d < numDimensions; d++)
             {
-                auto [scRowIndicesA, countsSubsetA] = countLabelDistribution(selectionA);
-                auto [scRowIndicesB, countsSubsetB] = countLabelDistribution(selectionB);
+                // first divide means by number of rows
+                meanA[d] /= selectionA.size();
+                meanB[d] /= selectionB.size();
 
-                std::ptrdiff_t numDimensions = _avgExprDataset->getNumDimensions();
-                std::vector<float> meanA(numDimensions, 0);
-                std::vector<float> meanB(numDimensions, 0);
-
-                sumAndAverage(scRowIndicesA, countsSubsetA, _avgExprDataset, meanA);
-                sumAndAverage(scRowIndicesB, countsSubsetB, _avgExprDataset, meanB);
-
-                //uppdate Table
-                int totalColumnCount = 4;
-                _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
-#pragma omp  parallel for schedule(dynamic,1)
-                for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
-                {
-                    std::vector<QVariant> dataVector(totalColumnCount);
-                    dataVector[0] = _geneListSC[dimension];
-
-                    dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 2);
-                    dataVector[2] = local::fround(meanA[dimension], 2);
-                    dataVector[3] = local::fround(meanB[dimension], 2);
-                    _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
-                }
-                _tableItemModel->setHorizontalHeader(0, QString("ID"));
-                _tableItemModel->setHorizontalHeader(1, QString("Differential Expression"));
-                _tableItemModel->setHorizontalHeader(2, QString("Mean Selection 1\n(%1 cells)").arg(selectionA.size()));
-                _tableItemModel->setHorizontalHeader(3, QString("Mean Selection 2\n(%1 cells)").arg(selectionB.size()));
-                _tableItemModel->endModelBuilding();
+                // then min max
+                //meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
+                //meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
             }
+            int totalColumnCount = 4;
+            _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
+#pragma omp  parallel for schedule(dynamic,1)
+            for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
+            {
+                std::vector<QVariant> dataVector(totalColumnCount);
+                dataVector[0] = _geneList[dimension];
+
+                dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 2);
+                dataVector[2] = local::fround(meanA[dimension], 2);
+                dataVector[3] = local::fround(meanB[dimension], 2);
+                _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
+            }
+            _tableItemModel->setHorizontalHeader(0, QString("ID"));
+            _tableItemModel->setHorizontalHeader(1, QString("Differential Expression"));
+            _tableItemModel->setHorizontalHeader(2, QString("Mean Selection 1\n(%1 cells)").arg(selectionA.size()));
+            _tableItemModel->setHorizontalHeader(3, QString("Mean Selection 2\n(%1 cells)").arg(selectionB.size()));
+            _tableItemModel->endModelBuilding();
+
         });
 
     QGridLayout* selectionLayout = new QGridLayout();
@@ -719,8 +666,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
             
         }
     }
-    
-    
+      
     // Compute rescale values
     #pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
@@ -732,272 +678,6 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
             rescaleValues[d] = 1.0f;
     }
 
-    qDebug() << "Done computing";
-    qDebug() << rescaleValues[0] << minValues[0];
-    qDebug() << rescaleValues[1] << minValues[1];
-
-    // load avg expression
-    //loadAvgExpression();
-    //loadLabelsFromSTDataset();
-
-
-}
-
-void DifferentialExpressionPlugin::loadAvgExpression() {
-    qDebug() << "loadAvgExpression(): start... ";
-
-    std::ifstream file;
-
-    // temporary code to load avg expression from file TO DO: generalize to select file from GUI
-    //if (_positionSourceDataset->getGuiName() == "SEAAD_MTG_MERFISH") {
-        qDebug() << "Load avg expression for SEAAD dataset";
-        file.open("SEAAD_average_expression_supertype.csv"); // in this file column:gene symbol, row:supertype
-    //}
-    //else {
-    //    qDebug() << "Load avg expression for ABC Atlas";
-    //    file.open("precomputed_stats_ABC_revision_230821_alias_symbol.csv"); // in this file column:gene symbol, row:cluster alias
-    //}
-
-    if (!file.is_open()) {
-        qDebug() << "loadAvgExpression Error: Could not open the avg expr file.";
-        return;
-    }
-
-    _clusterNamesAvgExpr.clear();
-    _geneNamesAvgExpr.clear();
-
-    std::string line, cell;
-    // Read the first line to extract column headers (gene names)
-    if (std::getline(file, line)) {
-        std::stringstream lineStream(line);
-        bool firstColumn = true;
-        while (std::getline(lineStream, cell, ',')) {
-            if (firstColumn) {
-                // Skip the first cell of the first row
-                firstColumn = false;
-                continue;
-            }
-            _geneNamesAvgExpr.push_back(QString::fromStdString(cell));
-        }
-    }
-
-    // Prepare a vector of vectors to hold the matrix data temporarily
-    std::vector<std::vector<float>> matrixData;
-    while (std::getline(file, line)) {
-        std::stringstream lineStream(line);
-        std::vector<float> rowData;
-        std::string clusterNameStr;
-        if (std::getline(lineStream, clusterNameStr, ',')) {
-            try {
-                _clusterNamesAvgExpr.push_back(QString::fromStdString(clusterNameStr));
-            }
-            catch (const std::exception& e) {
-                std::cerr << "Error converting cluster name to int: " << e.what() << std::endl;
-                continue;
-            }
-        }
-
-        // Read each cell in the row
-        while (std::getline(lineStream, cell, ',')) {
-            try {
-                rowData.push_back(std::stof(cell));
-            }
-            catch (const std::exception& e) {
-                std::cerr << "Error converting cell to float: " << e.what() << std::endl;
-            }
-        }
-
-        matrixData.push_back(rowData);
-    }
-
-    int numClusters = _clusterNamesAvgExpr.size();
-    int numGenes = _geneNamesAvgExpr.size();
-
-    file.close();
-
-    _clusterAliasToRowMap.clear();// _clusterAliasToRowMap: first element is label name, second element is row index in _avgExpr
-    for (int i = 0; i < _clusterNamesAvgExpr.size(); ++i) {
-        _clusterAliasToRowMap[_clusterNamesAvgExpr[i]] = i;
-    }
-
-    // identify duplicate gene symbols and append an index to them
-    std::map<QString, int> geneSymbolCount;
-    for (const auto& geneName : _geneNamesAvgExpr) {
-        geneSymbolCount[geneName]++;
-    }
-    std::map<QString, int> geneSymbolIndex;
-    for (auto& geneName : _geneNamesAvgExpr) {
-        if (geneSymbolCount[geneName] > 1) {
-            geneSymbolIndex[geneName]++;// Duplicate found
-            geneName += "_copy" + QString::number(geneSymbolIndex[geneName]);// Append index to the gene symbol
-        }
-    }
-
-    // store the evg expression matrix as a dataset
-    size_t totalElements = numClusters * numGenes; // total number of data points
-    std::vector<float> allData;
-    allData.reserve(totalElements);
-    for (const auto& row : matrixData) {
-        allData.insert(allData.end(), row.begin(), row.end());
-    }
-
-    qDebug() << "loadAvgExpressionABCAtlas(): allData size: " << allData.size();
-
-    if (!_avgExprDataset.isValid()) {
-        qDebug() << "Create an avgExprDataset";
-        _avgExprDataset = mv::data().createDataset<Points>("Points", "avgExprDatasetForDiff");
-        events().notifyDatasetAdded(_avgExprDataset);
-    }
-
-    _avgExprDataset->setData(allData.data(), numClusters, numGenes); // Assuming this function signature is (data, rows, columns)
-    _avgExprDataset->setDimensionNames(_geneNamesAvgExpr);
-    events().notifyDatasetDataChanged(_avgExprDataset);
-
-    for (const auto& geneName : _geneNamesAvgExpr) {
-        _geneListSC.append(geneName);
-    }
-
-}
-
-void DifferentialExpressionPlugin::loadLabelsFromSTDataset() {
-    QString labelDatasetName;
-    //if (_positionSourceDataset->getGuiName() == "SEAAD_MTG_MERFISH") {
-        qDebug() << "Load labels for SEAAD dataset";
-        labelDatasetName = "Supertype";
-    //}
-    /*else {
-        qDebug() << "Load labels for ABC Atlas";
-        labelDatasetName = "cluster_alias";
-    }*/
-
-    Dataset<Clusters> labelDataset;
-    for (const auto& data : mv::data().getAllDatasets())
-    {
-        if (data->getGuiName() == labelDatasetName) {
-            labelDataset = data;
-        }
-    }
-
-    QVector<Cluster> labelClusters = labelDataset->getClusters();
-
-    // precompute the cell-label array
-    _cellLabels.clear();
-    _cellLabels.resize(_points->getNumPoints());
-
-    int numClustersNotInST = 0;
-
-    for (int i = 0; i < _clusterNamesAvgExpr.size(); ++i) {
-        QString clusterName = _clusterNamesAvgExpr[i];
-        bool found = false;
-
-        //search for the cluster name in labelClusters
-        for (const auto& cluster : labelClusters) {
-            if (cluster.getName() == clusterName) {
-                const auto& ptIndices = cluster.getIndices();
-                for (int j = 0; j < ptIndices.size(); ++j) {
-                    int ptIndex = ptIndices[j];
-                    _cellLabels[ptIndex] = clusterName;
-                }
-            }
-        }
-    }
-    if (numClustersNotInST > 0)
-       qDebug() << "Warning! DifferentialExpressionPlugin::loadLabelsFromSTDataset: " << numClustersNotInST << " clusters not found in ST";
-}
-
-std::pair<std::vector<int>, std::vector<float>> DifferentialExpressionPlugin::countLabelDistribution(std::vector<uint32_t>& indices)
-{
-    std::unordered_map<QString, int> clusterPointCounts;
-
-    for (int index = 0; index < indices.size(); ++index) {
-        int ptIndex = indices[index];
-        QString label = _cellLabels[ptIndex];
-        clusterPointCounts[label]++;
-    }
-
-    int numClusters = _avgExprDataset->getNumPoints();
-    int numGenes = _avgExprDataset->getNumDimensions();
-
-    std::vector<QString> clustersToKeep; // it is cluster names 1
-    for (int i = 0; i < numClusters; ++i) {
-        QString clusterName = _clusterNamesAvgExpr[i]; // here cannot use _clusterAliasToRowMap, because need to keep the order in clustersToKeep?
-        if (clusterPointCounts.find(clusterName) != clusterPointCounts.end()) {
-            clustersToKeep.push_back(clusterName);
-        }
-    }
-
-    // to check if any columns are not in _columnNamesAvgExpr
-    if (clustersToKeep.size() != clusterPointCounts.size()) {
-        qDebug() << "Warning! DifferentialExpressionPlugin::matchLabelInSubset(): " << clusterPointCounts.size() - clustersToKeep.size() << "clusters not found in avgExpr";
-        // output the cluster names that are not in
-        QString output;
-        for (const auto& pair : clusterPointCounts) {
-            QString clusterName = pair.first;
-            if (std::find(_clusterNamesAvgExpr.begin(), _clusterNamesAvgExpr.end(), clusterName) == _clusterNamesAvgExpr.end()) {
-                output += clusterName + " ";
-            }
-        }
-        //qDebug() << "matchLabelInSubset(): not found cluster names: " << output;
-    }
-    else {
-        //qDebug() << "matchLabelInSubset(): all clusters found in avgExpr";
-    }
-
-    // Handle case where no columns are to be kept // TO DO: check if needed
-    /*if (clustersToKeep.empty()) {
-        qDebug() << "matchLabelInSubset(): No cluster to keep";
-        return;
-    }*/
-
-    // prepare the subset counting for adding weighting to the subset
-    std::vector<float> countsSubset;
-    countsSubset.resize(clustersToKeep.size());
-    for (int i = 0; i < clustersToKeep.size(); ++i) {
-        const QString& clusterName = clustersToKeep[i];
-        countsSubset[i] = static_cast<float>(clusterPointCounts[clusterName]); // number of pt in each cluster WITHIN the selection
-    }
-
-    // prepare subset indices
-    std::vector<int> subsetIndices;
-    for (int i = 0; i < clustersToKeep.size(); ++i) {
-        QString clusterName = clustersToKeep[i];
-
-        auto it = _clusterAliasToRowMap.find(clusterName);
-        if (it == _clusterAliasToRowMap.end()) {
-            qDebug() << "Error: clusterName " << clusterName << " not found in clusterAliasToRowMap";
-            continue;
-        }
-        int clusterIndex = it->second;
-        subsetIndices.push_back(clusterIndex);
-    }
-
-    return std::pair<std::vector<int>, std::vector<float>>(subsetIndices, countsSubset);
-
-}
-
-void DifferentialExpressionPlugin::sumAndAverage(const std::vector<int>& indices, const std::vector<float>& counts, Dataset<Points> dataset, std::vector<float>& mean) 
-{
-    int numDimensions = dataset->getNumDimensions();
-    std::vector<float> total(numDimensions, 0.0f);
-    qDebug() <<  "sumAndAverage(): numDimensions: " << numDimensions << " indices.size(): " << indices.size() << " counts.size(): " << counts.size();
-
-    for (size_t i = 0; i < indices.size(); ++i) {
-        int rowIndex = indices[i];
-        float count = counts[i];
-
-        // Iterate over each dimension
-        for (int col = 0; col < numDimensions; ++col) {
-            int idx = rowIndex * numDimensions + col;
-            float value = dataset->getValueAt(idx);  // Get the value at calculated index
-            total[col] += value * count;  // Multiply by count and accumulate
-        }
-    }
-
-    // Calculate the average by dividing the total by the sum of counts
-    int totalCount = std::accumulate(counts.begin(), counts.end(), 0);
-    for (int d = 0; d < numDimensions; ++d) {
-        mean[d] = total[d] / totalCount;  // Ensure division is performed as float
-    }
 }
 
 
