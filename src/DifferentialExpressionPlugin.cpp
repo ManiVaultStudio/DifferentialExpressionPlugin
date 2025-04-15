@@ -489,9 +489,9 @@ void DifferentialExpressionPlugin::init()
                     meanA[d] /= selectionA.size();
                     meanB[d] /= selectionB.size();
 
-                    // then normalize. TODO: why do we normalize here ?
-                    meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
-                    meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
+                    // then min max
+                    //meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
+                    //meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
                 }
                 int totalColumnCount = 4;
                 _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
