@@ -68,7 +68,7 @@ namespace local
         }
     }
     template <typename FunctionObject>
-    void visitElements(Dataset<Points> points, FunctionObject functionObject,  const QString& description)
+    void visitElements(Dataset<Points> points, FunctionObject functionObject, const QString& description)
     {
         auto& task = points->getTask();
         task.setName(description);
@@ -76,54 +76,54 @@ namespace local
         task.setProgressMode(Task::ProgressMode::Subtasks);
         task.setRunning();
 
-       /* if (points->getSparseData().getValues().size())
-        {
-            const auto& _rowPointers = points->getSparseData().getIndexPointers();
-            const auto& _colIndices = points->getSparseData().getColIndices();
-            const auto& _values = points->getSparseData().getValues();
+        /* if (points->getSparseData().getValues().size())
+         {
+             const auto& _rowPointers = points->getSparseData().getIndexPointers();
+             const auto& _colIndices = points->getSparseData().getColIndices();
+             const auto& _values = points->getSparseData().getValues();
 
-            const auto _numCols = points->getSparseData().getNumCols();
-            const auto _numRows = points->getSparseData().getNumRows();
+             const auto _numCols = points->getSparseData().getNumCols();
+             const auto _numRows = points->getSparseData().getNumRows();
 
-            task.setSubtasks(_numRows);
-            for (std::size_t r = 0; r < _numRows; ++r)
+             task.setSubtasks(_numRows);
+             for (std::size_t r = 0; r < _numRows; ++r)
+             {
+                 const size_t nzEnd = _rowPointers[r + 1];
+
+                 for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
+                 {
+                     const auto value = _values[nzIndex];
+                     const auto column = _colIndices[nzIndex];
+                     functionObject(r, column, value);
+                 }
+
+                 task.subtaskFinished(r);
+             }
+
+             task.setFinished();
+         }
+         else
+         {*/
+        const auto numDimensions = points->getNumDimensions();
+        const auto numRows = points->getNumPoints();
+        points->visitData([numRows, &task, numDimensions, functionObject](auto data)
             {
-                const size_t nzEnd = _rowPointers[r + 1];
-
-                for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
+                task.setSubtasks(numRows);
+                for (std::size_t r = 0; r < numRows; ++r)
                 {
-                    const auto value = _values[nzIndex];
-                    const auto column = _colIndices[nzIndex];
-                    functionObject(r, column, value);
-                }
-
-                task.subtaskFinished(r);
-            }
-
-            task.setFinished();
-        }
-        else
-        {*/
-            const auto numDimensions = points->getNumDimensions();
-            const auto numRows = points->getNumPoints();
-            points->visitData([numRows, &task, numDimensions, functionObject](auto data)
-                {
-                    task.setSubtasks(numRows);
-                    for (std::size_t r = 0; r < numRows; ++r)
+                    for (std::size_t column = 0; column < numDimensions; ++column)
                     {
-                        for (std::size_t column = 0; column < numDimensions; ++column)
-                        {
-                            const auto value = data[r][column];
-                            functionObject(r, column, value);
-                        }
-                        task.subtaskFinished(r);
+                        const auto value = data[r][column];
+                        functionObject(r, column, value);
                     }
-                    task.setFinished();
-                });
+                    task.subtaskFinished(r);
+                }
+                task.setFinished();
+            });
         //}
     }
     template <typename RowRange, typename FunctionObject>
-    void visitElements(Dataset<Points> points, const RowRange& rows, FunctionObject functionObject, const QString &description)
+    void visitElements(Dataset<Points> points, const RowRange& rows, FunctionObject functionObject, const QString& description)
     {
         auto& task = points->getTask();
         task.setName(description);
@@ -156,22 +156,22 @@ namespace local
         }
         else
         {*/
-            const auto numDimensions = points->getNumDimensions();
-            points->visitData([&rows, &task, numDimensions, functionObject](auto data)
+        const auto numDimensions = points->getNumDimensions();
+        points->visitData([&rows, &task, numDimensions, functionObject](auto data)
+            {
+                task.setSubtasks(rows.size());
+                for (const auto r : rows)
                 {
-                    task.setSubtasks(rows.size());
-                    for (const auto r : rows)
+                    for (std::size_t column = 0; column < numDimensions; ++column)
                     {
-                        for(std::size_t column = 0; column < numDimensions; ++column)
-                        {
-                            const auto value = data[r][column];
-                            functionObject(r, column, value);
-                        }
-                        task.subtaskFinished(r);
+                        const auto value = data[r][column];
+                        functionObject(r, column, value);
                     }
-                    task.setFinished();
-                });
-            
+                    task.subtaskFinished(r);
+                }
+                task.setFinished();
+            });
+
         //}           
     }
 
@@ -187,13 +187,14 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _filterOnIdAction(this, "Filter on Id"),
     _selectedIdAction(this, "Last selected Id"),
     _updateStatisticsAction(this, "Calculate Differential Expression"),
-    _selectionTriggerActions(this,getGuiName(),"Set Selection %1"),
+    _selectionTriggerActions(this, getGuiName(), "Set Selection %1"),
     _sortFilterProxyModel(new TableSortFilterProxyModel),
     _tableItemModel(new TableModel(nullptr, false)),
     _tableView(nullptr),
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
-    _saveToCsvAction(&getWidget(), "Save As...")
+    _saveToCsvAction(&getWidget(), "Save As..."),
+    _normAction(&getWidget(), "Min max normalization")
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
@@ -202,7 +203,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _currentDatasetNameLabel->setAlignment(Qt::AlignCenter);
 
     { // copy to Clipboard
-       
+
         //addTitleBarMenuAction(&_saveToCsvAction);
         _saveToCsvAction.setIcon(mv::util::StyledIcon("file-csv"));
         _saveToCsvAction.setShortcut(tr("Ctrl+S"));
@@ -214,7 +215,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     }
 
     { // copy to Clipboard
-      
+
        // addTitleBarMenuAction(&_copyToClipboardAction);
         _copyToClipboardAction.setIcon(mv::util::StyledIcon("copy"));
         _copyToClipboardAction.setShortcut(tr("Ctrl+C"));
@@ -244,6 +245,16 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
 
     connect(&_updateStatisticsAction, &mv::gui::TriggerAction::triggered, this, &DifferentialExpressionPlugin::computeDE);
 
+    connect(&_normAction, &mv::gui::ToggleAction::toggled, this, [this]()
+        {
+            if (_normAction.isChecked())
+                _norm = true;
+            else
+                _norm = false;
+
+            _updateStatisticsAction.trigger();
+        });
+
     _serializedActions.append(&_loadedDatasetsAction);
     _serializedActions.append(&_selectedIdAction);
     _serializedActions.append(&_filterOnIdAction);
@@ -251,7 +262,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _serializedActions.append(&_saveToCsvAction);
     _serializedActions.append(&_updateStatisticsAction);
     _serializedActions.append(&_selectionTriggerActions);
-    
+
 }
 
 void DifferentialExpressionPlugin::init()
@@ -267,14 +278,14 @@ void DifferentialExpressionPlugin::init()
     layout->addWidget(_currentDatasetNameLabel);
 
     //_tableWidget = new QTableWidget(10, 3, &this->getWidget());
-    
+
     { // toolbar
         QWidget* filterWidget = _filterOnIdAction.createWidget(&mainWidget);
         filterWidget->setContentsMargins(0, 3, 0, 3);
-        
+
         QHBoxLayout* toolBarLayout = new QHBoxLayout;
         toolBarLayout->addWidget(filterWidget, 8);
-
+        toolBarLayout->addWidget(_normAction.createWidget(&mainWidget), 2);
 
         layout->addLayout(toolBarLayout);
     }
@@ -288,11 +299,11 @@ void DifferentialExpressionPlugin::init()
         _tableView->setSelectionMode(QAbstractItemView::SingleSelection);
         _tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
         _tableView->setContextMenuPolicy(Qt::ActionsContextMenu);
-        
+
         connect(_tableView->selectionModel(), &QItemSelectionModel::selectionChanged, this, &DifferentialExpressionPlugin::tableView_selectionChanged);
 
         WordWrapHeaderView* horizontalHeader = new WordWrapHeaderView(Qt::Horizontal, _tableView, true);
-        
+
         horizontalHeader->setFirstSectionMovable(false);
         horizontalHeader->setSectionsMovable(true);
         horizontalHeader->setSectionsClickable(true);
@@ -354,7 +365,7 @@ void DifferentialExpressionPlugin::init()
             dropRegions << new DropWidget::DropRegion(this, "Incompatible data", "This type of data is not supported", "exclamation-circle", false);
             qDebug() << "Incompatible data" << ": " << "This type of data is not supported";
         }
-        else 
+        else
         {
             // Accept points datasets drag and drop
             if (dataType == PointType) {
@@ -382,7 +393,7 @@ void DifferentialExpressionPlugin::init()
         }
 
         return dropRegions;
-    });
+        });
 
     // Respond when the name of the dataset in the dataset reference changes
     connect(&_points, &Dataset<Points>::guiNameChanged, this, [this]() {
@@ -394,36 +405,36 @@ void DifferentialExpressionPlugin::init()
 
         // Only show the drop indicator when nothing is loaded in the dataset reference
         _dropWidget->setShowDropIndicator(newDatasetName.isEmpty());
-    });
+        });
 
     //_setFirstSelectionButton = new QPushButton("0 cells");
     //_setSecondSelectionButton = new QPushButton("0 cells");
     //_computeDiffExprButton = new QPushButton("Compute diff expression");
 
-    for(std::size_t i=0; i < MultiTriggerAction::Size; ++i)
+    for (std::size_t i = 0; i < MultiTriggerAction::Size; ++i)
     {
         _selectedCellsLabel[i].setText(QString("(%1 cells)").arg(0));
         _selectedCellsLabel[i].setAlignment(Qt::AlignHCenter);
     }
-        
+
 
     connect(_selectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this]()
         {
             if (!_points.isValid())
                 return;
-        
+
             auto selectionDataset = _points->getSelection();
             std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
 
             selectionA = selectionIndices;
-                 
+
             qDebug() << "Saved selection A.";
             _selectedCellsLabel[0].setText(QString("(%1 cells)").arg(selectionA.size()));
-            if (selectionA.size() != 0 && selectionB.size() !=0)
+            if (selectionA.size() != 0 && selectionB.size() != 0)
                 _buttonProgressBar->showStatus(TableModel::Status::OutDated);
         });
 
-    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered,  [this]()
+    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this]()
         {
             if (!_points.isValid())
                 return;
@@ -431,7 +442,7 @@ void DifferentialExpressionPlugin::init()
             std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
             _selectedCellsLabel[1].setText(QString("(%1 cells)").arg(selectionB.size()));
             selectionB = selectionIndices;
-           
+
             qDebug() << "Saved selection B.";
             if (selectionA.size() != 0 && selectionB.size() != 0)
                 _buttonProgressBar->showStatus(TableModel::Status::OutDated);
@@ -479,9 +490,12 @@ void DifferentialExpressionPlugin::init()
                 meanA[d] /= selectionA.size();
                 meanB[d] /= selectionB.size();
 
-                // then min max
-                //meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
-                //meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
+                // then min max - optional by toggle action
+                if (_norm)
+                {
+                    meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
+                    meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
+                }
 
                 // compute median
                 auto& vectorA = valuesA[d];
@@ -492,6 +506,13 @@ void DifferentialExpressionPlugin::init()
 
                 std::nth_element(vectorB.begin(), vectorB.begin() + vectorB.size() / 2, vectorB.end());
                 medianB[d] = vectorB[vectorB.size() / 2];
+
+                // then min max - optional by toggle action
+                if (_norm)
+                {
+                    medianA[d] = (medianA[d] - minValues[d]) * rescaleValues[d];
+                    medianB[d] = (medianB[d] - minValues[d]) * rescaleValues[d];
+                }
             }
             //int totalColumnCount = 4;
             int totalColumnCount = 6; // with two median columns
@@ -520,17 +541,17 @@ void DifferentialExpressionPlugin::init()
         });
 
     QGridLayout* selectionLayout = new QGridLayout();
-    for(std::size_t i=0 ; i <MultiTriggerAction::Size;++i)
+    for (std::size_t i = 0; i < MultiTriggerAction::Size; ++i)
     {
-        selectionLayout->addWidget(_selectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget),0,i);
+        selectionLayout->addWidget(_selectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 0, i);
         selectionLayout->addWidget(&_selectedCellsLabel[i], 1, i);
         layout->addLayout(selectionLayout);
     }
-    
-    
-   // layout->addWidget(_computeDiffExprButton);
 
-    // Load points when the pointer to the position dataset changes
+
+    // layout->addWidget(_computeDiffExprButton);
+
+     // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);
 
     // Alternatively, classes which derive from hdsp::EventListener (all plugins do) can also respond to events
@@ -554,19 +575,19 @@ void DifferentialExpressionPlugin::onDataEvent(mv::DatasetEvent* dataEvent)
     switch (dataEvent->getType()) {
 
         // A points dataset was added
-        case EventType::DatasetAdded:
-        {
-            // Cast the data event to a data added event
-            const auto dataAddedEvent = static_cast<DatasetAddedEvent*>(dataEvent);
+    case EventType::DatasetAdded:
+    {
+        // Cast the data event to a data added event
+        const auto dataAddedEvent = static_cast<DatasetAddedEvent*>(dataEvent);
 
-            // Get the GUI name of the added points dataset and print to the console
-            qDebug() << datasetGuiName << "was added";
+        // Get the GUI name of the added points dataset and print to the console
+        qDebug() << datasetGuiName << "was added";
 
-            break;
-        }
+        break;
+    }
 
-        default:
-            break;
+    default:
+        break;
     }
 }
 
@@ -577,7 +598,7 @@ void DifferentialExpressionPlugin::setPositionDataset(mv::Dataset<Points> newPoi
         qDebug() << "DifferentialExpressionPlugin Warning: invalid dataset!";
         return;
     }
-        
+
 
     auto pointDatasets = mv::data().getAllDatasets(std::vector<mv::DataType> {PointType});
     /*
@@ -635,15 +656,15 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
         std::vector<std::size_t> count(numDimensions, 0);
 
-        
-        local::visitElements(_points,[this, &count](auto row, auto column, auto value)->void
+
+        local::visitElements(_points, [this, &count](auto row, auto column, auto value)->void
             {
                 if (value > rescaleValues[column])
                     rescaleValues[column] = value;
                 if (value < minValues[column])
                     minValues[column] = value;
                 count[column]++;
-            },QString("Determine value ranges"));
+            }, QString("Determine value ranges"));
 
 
         // check for potential 0 values and add them to the min and max range if needed
@@ -676,7 +697,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
             // load them from properties
             minValues.resize(numDimensions);
             rescaleValues.resize(numDimensions);
-            #pragma  omp parallel for
+#pragma  omp parallel for
             for (std::ptrdiff_t i = 0; i < numDimensions; ++i)
             {
                 auto v1 = minList[i];
@@ -686,12 +707,12 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
                 minValues[i] = m1;
                 rescaleValues[i] = m2;
             }
-            
+
         }
     }
-      
+
     // Compute rescale values
-    #pragma omp parallel for schedule(dynamic,1)
+#pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
     {
         float diff = (rescaleValues[d] - minValues[d]);
@@ -857,7 +878,7 @@ mv::gui::PluginTriggerActions DifferentialExpressionPluginFactory::getPluginTrig
 
     const auto getPluginInstance = [this]() -> DifferentialExpressionPlugin* {
         return dynamic_cast<DifferentialExpressionPlugin*>(plugins().requestViewPlugin(getKind()));
-    };
+        };
 
     const auto numberOfDatasets = datasets.count();
 
@@ -865,7 +886,7 @@ mv::gui::PluginTriggerActions DifferentialExpressionPluginFactory::getPluginTrig
         auto pluginTriggerAction = new PluginTriggerAction(const_cast<DifferentialExpressionPluginFactory*>(this), this, "Example", "View example data", StyledIcon(), [this, getPluginInstance, datasets](PluginTriggerAction& pluginTriggerAction) -> void {
             for (auto dataset : datasets)
                 getPluginInstance();
-        });
+            });
 
         pluginTriggerActions << pluginTriggerAction;
     }

@@ -120,6 +120,10 @@ protected:
     int selOpt = 0;
     std::vector<uint32_t> selectionA;
     std::vector<uint32_t> selectionB;
+
+    // TEMP: toggle for normalization within the loaded dataset
+    ToggleAction _normAction; // min max normalization
+    bool _norm = false;
 };
 
 /**
