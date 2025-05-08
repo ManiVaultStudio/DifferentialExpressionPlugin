@@ -523,11 +523,11 @@ void DifferentialExpressionPlugin::init()
                 std::vector<QVariant> dataVector(totalColumnCount);
                 dataVector[0] = _geneList[dimension];
 
-                dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 2);
-                dataVector[2] = local::fround(meanA[dimension], 2);
-                dataVector[3] = local::fround(meanB[dimension], 2);
-                dataVector[4] = local::fround(medianA[dimension], 2);
-                dataVector[5] = local::fround(medianB[dimension], 2);
+                dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 3);
+                dataVector[2] = local::fround(meanA[dimension], 3);
+                dataVector[3] = local::fround(meanB[dimension], 3);
+                dataVector[4] = local::fround(medianA[dimension], 3);
+                dataVector[5] = local::fround(medianB[dimension], 3);
                 _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
             }
             _tableItemModel->setHorizontalHeader(0, QString("ID"));
