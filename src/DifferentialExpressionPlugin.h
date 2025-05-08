@@ -74,18 +74,7 @@ public: // Serialization
     * @return Variant map representation of the plugin
     */
     QVariantMap toVariantMap() const override;
-
-
-private: 
-    // Single cell data
-    mv::Dataset<Points>                _avgExprDataset;          // Point dataset for average expression of each cluster
-    bool                               _isSingleCell = false;    // True if checkbox is checked
-    std::vector<QString>               _geneNamesAvgExpr;        // From avg expr single cell data    
-    std::vector<QString>               _clusterNamesAvgExpr;     // From avg expr single cell data
-    std::unordered_map<QString, int>   _clusterAliasToRowMap;    // Map label (QString) to row index in _avgExpr
-    std::vector<QString>               _cellLabels;              // Labels for each point
-    QStringList                        _geneListSC;
-    
+ 
 
 protected slots:
     void writeToCSV() const;
