@@ -452,15 +452,23 @@ void DifferentialExpressionPlugin::init()
             std::vector<float> meanA(numDimensions, 0);
             std::vector<float> meanB(numDimensions, 0);
 
+            // for median, collect per dimension values TODO: maybe look for median dynamically, instead of store the vectors
+            std::vector<std::vector<float>> valuesA(numDimensions);
+            std::vector<std::vector<float>> valuesB(numDimensions);
+            std::vector<float> medianA(numDimensions, 0);
+            std::vector<float> medianB(numDimensions, 0);
+
             // first compute the sum of values per dimension for selectionA and selectionB
-            local::visitElements(_points, selectionA, [&meanA](auto row, auto column, auto value)
+            local::visitElements(_points, selectionA, [&meanA, &valuesA](auto row, auto column, auto value)
                 {
                     meanA[column] += value;
+                    valuesA[column].push_back(value);// for median
                 }, QString("Computing mean expression values for Selection 1"));
 
-            local::visitElements(_points, selectionB, [&meanB](auto row, auto column, auto value)
+            local::visitElements(_points, selectionB, [&meanB, &valuesB](auto row, auto column, auto value)
                 {
                     meanB[column] += value;
+                    valuesB[column].push_back(value); // for median
                 }, QString("Computing mean expression values for Selection 2"));
 
 
@@ -474,8 +482,19 @@ void DifferentialExpressionPlugin::init()
                 // then min max
                 //meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
                 //meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
+
+                // compute median
+                auto& vectorA = valuesA[d];
+                auto& vectorB = valuesB[d];
+
+                std::nth_element(vectorA.begin(), vectorA.begin() + vectorA.size() / 2, vectorA.end());
+                medianA[d] = vectorA[vectorA.size() / 2];
+
+                std::nth_element(vectorB.begin(), vectorB.begin() + vectorB.size() / 2, vectorB.end());
+                medianB[d] = vectorB[vectorB.size() / 2];
             }
-            int totalColumnCount = 4;
+            //int totalColumnCount = 4;
+            int totalColumnCount = 6; // with two median columns
             _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
 #pragma omp  parallel for schedule(dynamic,1)
             for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
@@ -486,12 +505,16 @@ void DifferentialExpressionPlugin::init()
                 dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 2);
                 dataVector[2] = local::fround(meanA[dimension], 2);
                 dataVector[3] = local::fround(meanB[dimension], 2);
+                dataVector[4] = local::fround(medianA[dimension], 2);
+                dataVector[5] = local::fround(medianB[dimension], 2);
                 _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
             }
             _tableItemModel->setHorizontalHeader(0, QString("ID"));
             _tableItemModel->setHorizontalHeader(1, QString("Differential Expression"));
             _tableItemModel->setHorizontalHeader(2, QString("Mean Selection 1\n(%1 cells)").arg(selectionA.size()));
             _tableItemModel->setHorizontalHeader(3, QString("Mean Selection 2\n(%1 cells)").arg(selectionB.size()));
+            _tableItemModel->setHorizontalHeader(4, QString("Median Selection 1\n(%1 cells)").arg(selectionA.size()));
+            _tableItemModel->setHorizontalHeader(5, QString("Median Selection 2\n(%1 cells)").arg(selectionB.size()));
             _tableItemModel->endModelBuilding();
 
         });
