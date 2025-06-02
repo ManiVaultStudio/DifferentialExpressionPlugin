@@ -469,17 +469,33 @@ void DifferentialExpressionPlugin::init()
             std::vector<float> medianA(numDimensions, 0);
             std::vector<float> medianB(numDimensions, 0);
 
+            // Experiment: percentage expressed in the selection
+            std::vector<std::size_t> countExpressedA(numDimensions, 0);
+            std::vector<std::size_t> countExpressedB(numDimensions, 0);
+            std::vector<float> pctExpressedA(numDimensions, 0);
+            std::vector<float> pctExpressedB(numDimensions, 0);
+
+            float thr = 0.0f;
+
             // first compute the sum of values per dimension for selectionA and selectionB
-            local::visitElements(_points, selectionA, [&meanA, &valuesA](auto row, auto column, auto value)
+            local::visitElements(_points, selectionA, [&meanA, &valuesA, &countExpressedA, thr](auto row, auto column, auto value)
                 {
                     meanA[column] += value;
                     valuesA[column].push_back(value);// for median
+
+                    // Experiment: percentage expressed in the selection
+                    if (value > thr)
+                        countExpressedA[column]++;
                 }, QString("Computing mean expression values for Selection 1"));
 
-            local::visitElements(_points, selectionB, [&meanB, &valuesB](auto row, auto column, auto value)
+            local::visitElements(_points, selectionB, [&meanB, &valuesB, &countExpressedB, thr](auto row, auto column, auto value)
                 {
                     meanB[column] += value;
                     valuesB[column].push_back(value); // for median
+
+                    // Experiment: percentage expressed in the selection
+                    if (value > thr)
+                        countExpressedB[column]++;
                 }, QString("Computing mean expression values for Selection 2"));
 
 
@@ -513,9 +529,15 @@ void DifferentialExpressionPlugin::init()
                     medianA[d] = (medianA[d] - minValues[d]) * rescaleValues[d];
                     medianB[d] = (medianB[d] - minValues[d]) * rescaleValues[d];
                 }
+
+                // Experiment: percentage expressed in the selection
+                pctExpressedA[d] = 100.0f * countExpressedA[d] / selectionA.size();
+                pctExpressedB[d] = 100.0f * countExpressedB[d] / selectionB.size();
+                
             }
             //int totalColumnCount = 4;
-            int totalColumnCount = 6; // with two median columns
+            //int totalColumnCount = 6; // with two median columns
+            int totalColumnCount = 8; // with two median columns and two percentage expressed columns
             _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
 #pragma omp  parallel for schedule(dynamic,1)
             for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
@@ -528,6 +550,9 @@ void DifferentialExpressionPlugin::init()
                 dataVector[3] = local::fround(meanB[dimension], 3);
                 dataVector[4] = local::fround(medianA[dimension], 3);
                 dataVector[5] = local::fround(medianB[dimension], 3);
+                dataVector[6] = local::fround(pctExpressedA[dimension], 3);
+                dataVector[7] = local::fround(pctExpressedB[dimension], 3);
+
                 _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
             }
             _tableItemModel->setHorizontalHeader(0, QString("ID"));
@@ -536,6 +561,8 @@ void DifferentialExpressionPlugin::init()
             _tableItemModel->setHorizontalHeader(3, QString("Mean Selection 2\n(%1 cells)").arg(selectionB.size()));
             _tableItemModel->setHorizontalHeader(4, QString("Median Selection 1\n(%1 cells)").arg(selectionA.size()));
             _tableItemModel->setHorizontalHeader(5, QString("Median Selection 2\n(%1 cells)").arg(selectionB.size()));
+            _tableItemModel->setHorizontalHeader(6, QString("%expressed Selection 1\n(%1 cells)").arg(selectionA.size()));
+            _tableItemModel->setHorizontalHeader(7, QString("%expressed Selection 2\n(%1 cells)").arg(selectionB.size()));
             _tableItemModel->endModelBuilding();
 
         });
