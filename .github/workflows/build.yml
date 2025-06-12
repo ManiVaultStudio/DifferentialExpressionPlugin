@@ -8,7 +8,7 @@ on:
 env:
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
-  MACENABLED: ${{ inputs.forceMacBuild }}
+  # MACENABLED: ${{ inputs.forceMacBuild }}
 
 # for matrix check https://docs.github.com/en/actions/reference/specifications-for-github-hosted-runners
 jobs:
@@ -73,7 +73,7 @@ jobs:
           conan-pem: ${{secrets.LKEB_UPLOAD_CERT_CHAIN}}
           rs_ssh_key: ${{ secrets.RULESSUPPORT_DEPLOY_KEY }}
 
-       - name: Linux build
+      - name: Linux build
         if: startsWith(matrix.os, 'ubuntu')
         uses: ManiVaultStudio/github-actions/conan_linuxmac_build@main
         with:
@@ -90,7 +90,7 @@ jobs:
           conan-cxx: g++-${{matrix.build-cversion}}
       
       - name: Mac build
-        if: startsWith(matrix.os, 'macos') 
+        if: startsWith(matrix.os, 'macos')
         uses: ManiVaultStudio/github-actions/conan_linuxmac_build@main
         with:
           conan-compiler: ${{matrix.build-compiler}}
