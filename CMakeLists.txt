@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.22)
 
 # -----------------------------------------------------------------------------
 # Differential Expression Plugin
@@ -10,6 +10,7 @@ PROJECT("DifferentialExpressionPlugin")
 # -----------------------------------------------------------------------------
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
+set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOMOC ON)
 
 if(MSVC)
@@ -23,16 +24,24 @@ endif(MSVC)
 # Set install directory
 # -----------------------------------------------------------------------------
 # Check if the directory to the ManiVault installation has been provided
-if(NOT DEFINED MV_INSTALL_DIR)
-    set(MV_INSTALL_DIR "" CACHE PATH "Directory where ManiVault is installed")
-    message(FATAL_ERROR "Please set MV_INSTALL_DIR to the directory where ManiVault is installed")
-endif()
-file(TO_CMAKE_PATH ${MV_INSTALL_DIR} MV_INSTALL_DIR)
+# if(NOT DEFINED MV_INSTALL_DIR)
+    # set(MV_INSTALL_DIR "" CACHE PATH "Directory where ManiVault is installed")
+    # message(FATAL_ERROR "Please set MV_INSTALL_DIR to the directory where ManiVault is installed")
+# endif()
+# file(TO_CMAKE_PATH ${MV_INSTALL_DIR} MV_INSTALL_DIR)
 
 # -----------------------------------------------------------------------------
 # Dependencies
 # -----------------------------------------------------------------------------
 find_package(Qt6 COMPONENTS Widgets WebEngineWidgets REQUIRED)
+
+find_package(ManiVault COMPONENTS Core PointData ClusterData CONFIG QUIET)
+
+find_package(OpenMP)
+
+if(OpenMP_CXX_FOUND)
+    message(STATUS "Found OpenMP")
+endif()
 
 # -----------------------------------------------------------------------------
 # Source files
@@ -94,35 +103,39 @@ source_group(Model FILES ${MODEL})
 source_group(Actions FILES ${ACTIONS})
 source_group(Widget FILES ${WIDGETS})
 source_group(Util FILES ${UTIL})
+
 # -----------------------------------------------------------------------------
 # CMake Target
 # -----------------------------------------------------------------------------
 # Create dynamic library for the plugin
 add_library(${PROJECT_NAME} SHARED ${PLUGIN_SOURCES} ${RESOURCE_FILES} ${UTIL} ${WIDGETS} ${MODEL} ${ACTIONS})
 
-find_package(OpenMP REQUIRED)
-if(OpenMP_FOUND)
-	message(STATUS "OpenMP found")
-	target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
-	target_compile_options(${PROJECT_NAME} PRIVATE ${OpenMP_CXX_FLAGS})
-else()
-   message(WARNING "OpenMP not found!")
-endif()
+# find_package(OpenMP REQUIRED)
+# if(OpenMP_FOUND)
+	# message(STATUS "OpenMP found")
+	# target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+	# target_compile_options(${PROJECT_NAME} PRIVATE ${OpenMP_CXX_FLAGS})
+# else()
+   # message(WARNING "OpenMP not found!")
+# endif()
 
-qt_wrap_cpp(PLUGIN_MOC ${PLUGIN_MOC_HEADERS} TARGET ${PROJECT_NAME})
-target_sources(${PROJECT_NAME} PRIVATE ${PLUGIN_MOC})
+# qt_wrap_cpp(PLUGIN_MOC ${PLUGIN_MOC_HEADERS} TARGET ${PROJECT_NAME})
+# target_sources(${PROJECT_NAME} PRIVATE ${PLUGIN_MOC})
 
 # -----------------------------------------------------------------------------
 # Target include directories
 # -----------------------------------------------------------------------------
 # Include ManiVault headers, including system data plugins
-target_include_directories(${PROJECT_NAME} PRIVATE "${MV_INSTALL_DIR}/$<CONFIGURATION>/include/")
+target_include_directories(${PROJECT_NAME} PRIVATE "${ManiVault_INCLUDE_DIR}")
 
 # -----------------------------------------------------------------------------
 # Target properties
 # -----------------------------------------------------------------------------
-# Request C++17
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
+
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
+if(MV_UNITY_BUILD)
+    set_target_properties(${PROJECT_NAME} PROPERTIES UNITY_BUILD ON)
+endif()
 
 # -----------------------------------------------------------------------------
 # Target library linking
@@ -131,21 +144,14 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets)
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::WebEngineWidgets)
 
-# Link to ManiVault and data plugins
-# The link path in this repo assumes that the ManiVault core was built locally
-# in contrast to having been installed with an installer. In the latter case you'll have
-# to adapt the MV_LINK_PATH and PLUGIN_LINK_PATH to your install folder
-set(MV_LINK_PATH "${MV_INSTALL_DIR}/$<CONFIGURATION>/lib")
-set(PLUGIN_LINK_PATH "${MV_INSTALL_DIR}/$<CONFIGURATION>/$<IF:$<CXX_COMPILER_ID:MSVC>,lib,Plugins>")
-set(MV_LINK_SUFFIX $<IF:$<CXX_COMPILER_ID:MSVC>,${CMAKE_LINK_LIBRARY_SUFFIX},${CMAKE_SHARED_LIBRARY_SUFFIX}>)
+target_link_libraries(${PROJECT_NAME} PRIVATE ManiVault::Core)
+target_link_libraries(${PROJECT_NAME} PRIVATE ManiVault::PointData)
+target_link_libraries(${PROJECT_NAME} PRIVATE ManiVault::ClusterData)
 
-set(MV_LINK_LIBRARY "${MV_LINK_PATH}/${CMAKE_SHARED_LIBRARY_PREFIX}MV_Public${MV_LINK_SUFFIX}")
-set(POINTDATA_LINK_LIBRARY "${PLUGIN_LINK_PATH}/${CMAKE_SHARED_LIBRARY_PREFIX}PointData${MV_LINK_SUFFIX}") 
-set(CLUSTERDATA_LINK_LIBRARY "${PLUGIN_LINK_PATH}/${CMAKE_SHARED_LIBRARY_PREFIX}ClusterData${MV_LINK_SUFFIX}") 
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
+endif()
 
-target_link_libraries(${PROJECT_NAME} PRIVATE "${MV_LINK_LIBRARY}")
-target_link_libraries(${PROJECT_NAME} PRIVATE "${POINTDATA_LINK_LIBRARY}")
-target_link_libraries(${PROJECT_NAME} PRIVATE "${CLUSTERDATA_LINK_LIBRARY}")
 
 # -----------------------------------------------------------------------------
 # Target installation
@@ -163,11 +169,17 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         --prefix ${MV_INSTALL_DIR}/$<CONFIGURATION>
 )
 
+set_target_properties(${PROJECT_NAME}
+    PROPERTIES
+    FOLDER ViewPlugins
+)
+
+
 # -----------------------------------------------------------------------------
 # Miscellaneous
 # -----------------------------------------------------------------------------
 # Automatically set the debug environment (command + working directory) for MSVC
 if(MSVC)
-    set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY $<IF:$<CONFIG:DEBUG>,${MV_INSTALL_DIR}/debug,${MV_INSTALL_DIR}/release>)
-    set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_COMMAND $<IF:$<CONFIG:DEBUG>,"${MV_INSTALL_DIR}/debug/ManiVault Studio.exe","${MV_INSTALL_DIR}/release/ManiVault Studio.exe">)
+    set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY $<IF:$<CONFIG:DEBUG>,${ManiVault_INSTALL_DIR}/Debug,$<IF:$<CONFIG:RELWITHDEBINFO>,${ManiVault_INSTALL_DIR}/RelWithDebInfo,${ManiVault_INSTALL_DIR}/Release>>)
+    set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_COMMAND $<IF:$<CONFIG:DEBUG>,"${ManiVault_INSTALL_DIR}/Debug/ManiVault Studio.exe",$<IF:$<CONFIG:RELWITHDEBINFO>,"${ManiVault_INSTALL_DIR}/RelWithDebInfo/ManiVault Studio.exe","${ManiVault_INSTALL_DIR}/Release/ManiVault Studio.exe">>)
 endif()
