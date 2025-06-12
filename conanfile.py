@@ -9,12 +9,12 @@ import subprocess
 from rules_support import PluginBranchInfo
 import re
 
-def compatibility(os, compiler, compiler_version):
-    # On macos fallback to zlib apple-clang 13
-    if os == "Macos" and compiler == "apple-clang" and bool(re.match("14.*", compiler_version)):  
-        print("Compatibility match")
-        return ["zlib/1.3:compiler.version=13"]
-    return None
+# def compatibility(os, compiler, compiler_version):
+    # # On macos fallback to zlib apple-clang 13
+    # if os == "Macos" and compiler == "apple-clang" and bool(re.match("14.*", compiler_version)):  
+        # print("Compatibility match")
+        # return ["zlib/1.3:compiler.version=13"]
+    # return None
 
 class DifferentialExpressionPluginConan(ConanFile):
     """Class to package DifferentialExpressionPlugin using conan
@@ -102,33 +102,27 @@ class DifferentialExpressionPluginConan(ConanFile):
             generator = "Xcode"
         if self.settings.os == "Linux":
             generator = "Ninja Multi-Config"
-        # Use the Qt provided .cmake files
-        qtpath = pathlib.Path(self.deps_cpp_info["qt"].rootpath)
-        qt_root = str(list(qtpath.glob("**/Qt6Config.cmake"))[0].parents[3].as_posix())
-
+        
         tc = CMakeToolchain(self, generator=generator)
-        if self.settings.os == "Windows" and self.options.shared:
-            tc.variables["CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS"] = True
-        if self.settings.os == "Linux" or self.settings.os == "Macos":
-            tc.variables["CMAKE_CXX_STANDARD_REQUIRED"] = "ON"
-        prefix_path = qt_root
-        if os_info.is_macos:
-            proc = subprocess.run(
-                "brew --prefix libomp", shell=True, capture_output=True
-            )
-            prefix_path = prefix_path + f";{proc.stdout.decode('UTF-8').strip()}"
-        tc.variables["CMAKE_PREFIX_PATH"] = prefix_path
-        tc.variables["USE_ARTIFACTORY_LIBS"] = "ON"
-        
-        # Set the installation directory for ManiVault based on the MV_INSTALL_DIR environment variable
-        # or if none is specified, set it to the build/install dir.
-        if not os.environ.get("MV_INSTALL_DIR", None):
-            os.environ["MV_INSTALL_DIR"] = os.path.join(self.build_folder, "install")
-        print("MV_INSTALL_DIR: ", os.environ["MV_INSTALL_DIR"])
-        self.install_dir = pathlib.Path(os.environ["MV_INSTALL_DIR"]).as_posix()
-        # Give the installation directory to CMake
-        tc.variables["MV_INSTALL_DIR"] = self.install_dir
-        
+
+        tc.variables["CMAKE_CXX_STANDARD_REQUIRED"] = "ON"
+
+        # Use the Qt provided .cmake files
+        qt_path = pathlib.Path(self.deps_cpp_info["qt"].rootpath)
+        qt_cfg = list(qt_path.glob("**/Qt6Config.cmake"))[0]
+        qt_dir = qt_cfg.parents[0].as_posix()
+
+        tc.variables["Qt6_DIR"] = qt_dir
+
+        # Use the ManiVault .cmake file to find ManiVault with find_package
+        mv_core_root = self.deps_cpp_info["hdps-core"].rootpath
+        manivault_dir = pathlib.Path(mv_core_root, "cmake", "mv").as_posix()
+        print("ManiVault_DIR: ", manivault_dir)
+        tc.variables["ManiVault_DIR"] = manivault_dir
+
+        # Set some build options
+        tc.variables["MV_UNITY_BUILD"] = "ON"
+
         tc.generate()
 
     def _configure_cmake(self):
@@ -139,22 +133,15 @@ class DifferentialExpressionPluginConan(ConanFile):
 
     def build(self):
         print("Build OS is : ", self.settings.os)
-
-        # The BinNIO plugins expect the HDPS package to be in this install dir
-        hdps_pkg_root = self.deps_cpp_info["hdps-core"].rootpath
-        print("Install dir type: ", self.install_dir)
-        shutil.copytree(hdps_pkg_root, self.install_dir)
-
+        
         cmake = self._configure_cmake()
-        cmake.build(build_type="Debug")
-        cmake.install(build_type="Debug")
-
-        # cmake_release = self._configure_cmake()
+        cmake.build(build_type="RelWithDebInfo")
         cmake.build(build_type="Release")
-        cmake.install(build_type="Release")
 
     def package(self):
-        package_dir = os.path.join(self.build_folder, "package")
+        package_dir = pathlib.Path(self.build_folder, "package")
+        relWithDebInfo_dir = package_dir / "RelWithDebInfo"
+        release_dir = package_dir / "Release"
         print("Packaging install dir: ", package_dir)
         subprocess.run(
             [
@@ -162,9 +149,9 @@ class DifferentialExpressionPluginConan(ConanFile):
                 "--install",
                 self.build_folder,
                 "--config",
-                "Debug",
+                "RelWithDebInfo",
                 "--prefix",
-                os.path.join(package_dir, "Debug"),
+                relWithDebInfo_dir,
             ]
         )
         subprocess.run(
@@ -175,19 +162,15 @@ class DifferentialExpressionPluginConan(ConanFile):
                 "--config",
                 "Release",
                 "--prefix",
-                os.path.join(package_dir, "Release"),
+                release_dir,
             ]
         )
         self.copy(pattern="*", src=package_dir)
-        # Add the debug support files to the package
-        # (*.pdb) if building the Visual Studio version
-        if self.settings.compiler == "Visual Studio":
-            self.copy("*.pdb", dst="Debug/Plugins", keep_path=False)
 
     def package_info(self):
-        self.cpp_info.debug.libdirs = ["Debug/lib"]
-        self.cpp_info.debug.bindirs = ["Debug/Plugins", "Debug"]
-        self.cpp_info.debug.includedirs = ["Debug/include", "Debug"]
+        self.cpp_info.relwithdebinfo.libdirs = ["RelWithDebInfo/lib"]
+        self.cpp_info.relwithdebinfo.bindirs = ["RelWithDebInfo/Plugins", "RelWithDebInfo"]
+        self.cpp_info.relwithdebinfo.includedirs = ["RelWithDebInfo/include", "RelWithDebInfo"]
         self.cpp_info.release.libdirs = ["Release/lib"]
         self.cpp_info.release.bindirs = ["Release/Plugins", "Release"]
         self.cpp_info.release.includedirs = ["Release/include", "Release"]
