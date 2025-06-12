@@ -194,7 +194,8 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
-    _normAction(&getWidget(), "Min max normalization")
+    _normAction(&getWidget(), "Min max norm"),
+    _thresholdExpressedAction(&getWidget(), "Threshold %expressed", 0.0f, 4.0f, 0.0f, 1)
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
@@ -255,6 +256,11 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
             _updateStatisticsAction.trigger();
         });
 
+    connect(&_thresholdExpressedAction, &DecimalAction::valueChanged, this, [this](float value)
+        {
+            _updateStatisticsAction.trigger();
+        });
+
     _serializedActions.append(&_loadedDatasetsAction);
     _serializedActions.append(&_selectedIdAction);
     _serializedActions.append(&_filterOnIdAction);
@@ -284,8 +290,9 @@ void DifferentialExpressionPlugin::init()
         filterWidget->setContentsMargins(0, 3, 0, 3);
 
         QHBoxLayout* toolBarLayout = new QHBoxLayout;
-        toolBarLayout->addWidget(filterWidget, 8);
+        toolBarLayout->addWidget(filterWidget, 6);
         toolBarLayout->addWidget(_normAction.createWidget(&mainWidget), 2);
+        toolBarLayout->addWidget(_thresholdExpressedAction.createWidget(&mainWidget), 2);
 
         layout->addLayout(toolBarLayout);
     }
@@ -475,7 +482,7 @@ void DifferentialExpressionPlugin::init()
             std::vector<float> pctExpressedA(numDimensions, 0);
             std::vector<float> pctExpressedB(numDimensions, 0);
 
-            float thr = 0.0f;
+            float thr = _thresholdExpressedAction.getValue();
 
             // first compute the sum of values per dimension for selectionA and selectionB
             local::visitElements(_points, selectionA, [&meanA, &valuesA, &countExpressedA, thr](auto row, auto column, auto value)

@@ -5,6 +5,8 @@
 #include "LoadedDatasetsAction.h"
 #include "MultiTriggerAction.h"
 
+#include "actions/DecimalAction.h"
+
 #include <Dataset.h>
 #include <widgets/DropWidget.h>
 
@@ -124,6 +126,9 @@ protected:
     // TEMP: toggle for normalization within the loaded dataset
     ToggleAction _normAction; // min max normalization
     bool _norm = false;
+
+    // TEMP: slider for threshold for % expressed
+    DecimalAction _thresholdExpressedAction; // threshold for % expressed
 };
 
 /**
