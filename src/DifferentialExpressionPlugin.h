@@ -9,8 +9,6 @@
 #include <widgets/DropWidget.h>
 
 #include <PointData/PointData.h>
-#include <ClusterData/ClusterData.h>
-
 
 #include <QTableWidget>
 #include "TableSortFilterProxyModel.h"
