@@ -7,19 +7,18 @@
 #include <QDebug>
 #include <QMimeData>
 #include <QFile>
-
 #include <QPushButton>
-
-#include <iostream>
-#include <omp.h>
-
-#include "WordWrapHeaderView.h"
 #include <QFileDialog>
 
+#include "WordWrapHeaderView.h"
 
+#include <cassert>
+#include <cmath>
+#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <limits>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
@@ -847,15 +846,14 @@ void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelecti
     tableView_clicked(selected.indexes().first());
 }
 
-/******************************************************************************
- * Plugin Factory
- ******************************************************************************/
+// =============================================================================
+// Factory
+// =============================================================================
 
 DifferentialExpressionPluginFactory::DifferentialExpressionPluginFactory()
 {
     setIconByName("table");
 }
-
 
 ViewPlugin* DifferentialExpressionPluginFactory::produce()
 {
