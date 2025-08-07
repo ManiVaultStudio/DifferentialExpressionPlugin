@@ -170,7 +170,6 @@ QVariant& TableModel::at(std::size_t row, std::size_t column)
 
 void TableModel::setRow(std::size_t row, const std::vector<QVariant> &data, Qt::CheckState checked, bool silent/*=false*/)
 {
-
 	assert(data.size() == m_columns);
 	std::size_t startColumn = m_columns;
 	std::size_t endColumn = m_columns;

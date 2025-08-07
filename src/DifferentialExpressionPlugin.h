@@ -81,8 +81,6 @@ protected:
     MultiTriggerAction                       _selectionTriggerActions;
     QLabel                                   _selectedCellsLabel[MultiTriggerAction::Size];  
    
-    QStringList                              _geneList;
-
     LoadedDatasetsAction                     _loadedDatasetsAction;
 
     TriggerAction                            _updateStatisticsAction;
