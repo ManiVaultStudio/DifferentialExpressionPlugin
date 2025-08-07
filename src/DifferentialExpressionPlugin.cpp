@@ -19,6 +19,7 @@
 #include <sstream>
 #include <string>
 #include <limits>
+#include <algorithm>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
@@ -26,7 +27,7 @@ using namespace mv;
 
 namespace local
 {
-    bool is_valid_QByteArray(const QByteArray& state)
+    static bool is_valid_QByteArray(const QByteArray& state)
     {
         QByteArray data = state;
         QDataStream stream(&data, QIODevice::ReadOnly);
@@ -564,18 +565,7 @@ void DifferentialExpressionPlugin::setPositionDataset(mv::Dataset<Points> newPoi
         return;
     }
 
-
-    auto pointDatasets = mv::data().getAllDatasets(std::vector<mv::DataType> {PointType});
-    /*
-    if(_points.isValid())
-    {
-        _points->removeGroupIndexAction(_selectionTriggerActions);
-    }
-    */
     _points = newPoints;
-    /*
-    _points->addGroupIndexAction(_selectionTriggerActions, true);
-    */
 
     auto newDatasetName = _points->getGuiName();
 
@@ -621,7 +611,6 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
         std::vector<std::size_t> count(numDimensions, 0);
 
-
         local::visitElements(_points, [this, &count](auto row, auto column, auto value)->void
             {
                 if (value > rescaleValues[column])
@@ -665,12 +654,8 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 #pragma  omp parallel for
             for (std::ptrdiff_t i = 0; i < numDimensions; ++i)
             {
-                auto v1 = minList[i];
-                auto m1 = v1.toFloat();
-                auto v2 = maxList[i];
-                auto m2 = v2.toFloat();
-                minValues[i] = m1;
-                rescaleValues[i] = m2;
+                minValues[i]        = minList[i].toFloat();
+                rescaleValues[i]    = maxList[i].toFloat();
             }
 
         }

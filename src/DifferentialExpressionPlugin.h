@@ -50,6 +50,7 @@ public: // Miscellaneous
     mv::Dataset<Points>& getPositionDataset() { return _points; }
 
 public: // Serialization
+
     /**
     * Load plugin from variant map
     * @param Variant map representation of the plugin
