@@ -7,19 +7,16 @@
 //#include <QAbstractItemModelTester>
 //#define TESTING
 
-namespace 
+namespace local
 {
-	namespace local
+    static void fixQStringForClipboard(QString& s, QChar separator)
 	{
-		void fixQStringForClipboard(QString& s, QChar separator)
-		{
-			QChar defaultReplaceChar = ' ';
-			if (separator == defaultReplaceChar)
-				defaultReplaceChar = '_';
-			s.replace('\n', defaultReplaceChar);
-			s.replace('\t', defaultReplaceChar);
-			s.replace(separator, ' ');
-		}
+		QChar defaultReplaceChar = ' ';
+		if (separator == defaultReplaceChar)
+			defaultReplaceChar = '_';
+		s.replace('\n', defaultReplaceChar);
+		s.replace('\t', defaultReplaceChar);
+		s.replace(separator, ' ');
 	}
 }
 
