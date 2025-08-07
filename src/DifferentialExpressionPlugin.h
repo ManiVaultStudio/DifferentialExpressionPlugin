@@ -41,12 +41,6 @@ public:
     /** This function is called by the core after the view plugin has been created */
     void init() override;
 
-    /**
-     * Invoked when a data event occurs
-     * @param dataEvent Data event which occurred
-     */
-    void onDataEvent(mv::DatasetEvent* dataEvent);
-
     void setPositionDataset(mv::Dataset<Points> newPoints);
     /** Invoked when the position points dataset changes */
     void positionDatasetChanged();

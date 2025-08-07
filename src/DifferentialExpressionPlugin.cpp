@@ -553,42 +553,8 @@ void DifferentialExpressionPlugin::init()
      // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);
 
-    // Alternatively, classes which derive from hdsp::EventListener (all plugins do) can also respond to events
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetAdded));
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetDataChanged));
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetRemoved));
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetDataSelectionChanged));
-    _eventListener.registerDataEventByType(PointType, std::bind(&DifferentialExpressionPlugin::onDataEvent, this, std::placeholders::_1));
-
 }
 
-void DifferentialExpressionPlugin::onDataEvent(mv::DatasetEvent* dataEvent)
-{
-    // Get smart pointer to dataset that changed
-    const auto changedDataSet = dataEvent->getDataset();
-
-    // Get GUI name of the dataset that changed
-    const auto datasetGuiName = changedDataSet->getGuiName();
-
-    // The data event has a type so that we know what type of data event occurred (e.g. data added, changed, removed, renamed, selection changes)
-    switch (dataEvent->getType()) {
-
-        // A points dataset was added
-    case EventType::DatasetAdded:
-    {
-        // Cast the data event to a data added event
-        const auto dataAddedEvent = static_cast<DatasetAddedEvent*>(dataEvent);
-
-        // Get the GUI name of the added points dataset and print to the console
-        qDebug() << datasetGuiName << "was added";
-
-        break;
-    }
-
-    default:
-        break;
-    }
-}
 
 void DifferentialExpressionPlugin::setPositionDataset(mv::Dataset<Points> newPoints)
 {
