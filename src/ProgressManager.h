@@ -1,9 +1,9 @@
-
 #pragma once
 
 #include <atomic>
-#include <vector>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include <QString>
 
@@ -14,7 +14,9 @@ class QWidgetAction;
 
 class ProgressManager
 {
-	enum{MAX_RANGE=1000};
+private:
+    static constexpr int MAX_RANGE = 1000;
+
 	std::vector<int8_t> m_progress;
 	QString m_labelText;
 	QProgressDialog *m_progressDialog;
@@ -26,6 +28,7 @@ class ProgressManager
 	bool m_autoRaise;
 	float m_scaleFactor;
 	std::size_t m_maxRange;
+
 public:
 	ProgressManager();
 	~ProgressManager();
@@ -51,6 +54,4 @@ public:
 	void setTextVisible(bool value);
 	int value() const;
     int currentProgress() const;
-	
-
 };

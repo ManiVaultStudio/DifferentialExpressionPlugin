@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <iomanip>
+#include <cassert>
+#include <stdexcept>
 
 #include <QProgressDialog>
 #include <QProgressBar>
@@ -70,8 +72,6 @@ void ProgressManager::start(std::size_t size, const std::string &mesg)
 
 	m_available = false;
 	
-	
-	
 	if (m_progressBar)
 	{
 		
@@ -105,7 +105,7 @@ void ProgressManager::setRange( std::size_t size)
 {
 	m_maxRange = size;
 	if (m_maxRange)
-		m_scaleFactor = (1.0f * MAX_RANGE) / m_maxRange;
+		m_scaleFactor = static_cast<float>(MAX_RANGE) / m_maxRange;
 	else
 		m_scaleFactor = 0;
 	m_progress.assign(size, 0);
@@ -232,8 +232,6 @@ void ProgressManager::end()
 	}
 	
 }
-
-
 
 void ProgressManager::setLabelText(const QString& mesg)
 {
