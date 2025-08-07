@@ -4,7 +4,7 @@
 #include <atomic>
 #include <vector>
 #include <string>
-#include "QSysInfo"
+
 #include <QString>
 
 class QProgressDialog;

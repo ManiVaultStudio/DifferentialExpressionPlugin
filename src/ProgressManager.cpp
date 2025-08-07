@@ -1,26 +1,19 @@
 #include "ProgressManager.h"
-//#ifdef __APPLE__
-//#include "omp.h"
-////#include </opt/homebrew/opt/libomp/include/omp.h>
-//#else
-//#include <omp.h>
-//#endif
 
-
-#include <omp.h>
-#include <QProgressDialog>
 #include <iostream>
 #include <iomanip>
 
+#include <QProgressDialog>
 #include <QProgressBar>
-#include <QMenuBar>
-#include "QApplication"
+#include <QApplication>
 #include <QLabel>
 #include <QMainWindow>
 
+#include <omp.h>
+
 namespace local
 {
-    QMainWindow* getMainWindow()
+    static QMainWindow* getMainWindow()
     {
         foreach(QWidget * widget, qApp->topLevelWidgets())
             if (QMainWindow* mainWindow = qobject_cast<QMainWindow*>(widget))

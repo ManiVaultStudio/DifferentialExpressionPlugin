@@ -1,11 +1,17 @@
 #include "TableModel.h"
+
 #include <QApplication>
 #include <QClipboard>
-#include <assert.h>
 #include <QMetaType>
 #include <QLabel>
-//#include <QAbstractItemModelTester>
+
+#include <cassert>
+
 //#define TESTING
+
+#ifdef TESTING
+#include <QAbstractItemModelTester>
+#endif
 
 namespace local
 {
