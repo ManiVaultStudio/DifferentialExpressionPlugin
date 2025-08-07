@@ -129,11 +129,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         --prefix ${MV_INSTALL_DIR}/$<CONFIGURATION>
 )
 
-set_target_properties(${PROJECT_NAME}
-    PROPERTIES
-    FOLDER ViewPlugins
-)
-
+mv_handle_plugin_config(${PROJECT_NAME})
 
 # -----------------------------------------------------------------------------
 # Miscellaneous
