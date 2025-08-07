@@ -120,7 +120,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         --install ${CMAKE_CURRENT_BINARY_DIR}
         --config $<CONFIGURATION>
         --component PLUGINS
-        --prefix ${MV_INSTALL_DIR}/$<CONFIGURATION>
+        --prefix ${ManiVault_INSTALL_DIR}/$<CONFIGURATION>
 )
 
 mv_handle_plugin_config(${PROJECT_NAME})
