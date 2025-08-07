@@ -27,11 +27,7 @@ find_package(Qt6 COMPONENTS Widgets WebEngineWidgets REQUIRED)
 
 find_package(ManiVault COMPONENTS Core PointData CONFIG QUIET)
 
-find_package(OpenMP)
-
-if(OpenMP_CXX_FOUND)
-    message(STATUS "Found OpenMP")
-endif()
+find_package(OpenMP REQUIRED)
 
 # -----------------------------------------------------------------------------
 # Source files
@@ -108,9 +104,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::WebEngineWidgets)
 target_link_libraries(${PROJECT_NAME} PRIVATE ManiVault::Core)
 target_link_libraries(${PROJECT_NAME} PRIVATE ManiVault::PointData)
 
-if(OpenMP_CXX_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
-endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE OpenMP::OpenMP_CXX)
 
 # -----------------------------------------------------------------------------
 # Target installation
