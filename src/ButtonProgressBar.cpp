@@ -6,13 +6,10 @@
 #include <QGraphicsColorizeEffect>
 #include <stdexcept>
 
-
-
 class InvalidProgressBarException : public std::runtime_error {
 public:
     explicit InvalidProgressBarException(const std::string& message) : std::runtime_error(message) {}
 };
-
 
 ButtonProgressBar::ButtonProgressBar(QWidget *parent, QWidget* button, QWidget* progressBar)
 	:QWidget(parent)
@@ -132,7 +129,7 @@ void ButtonProgressBar::showStatus(TableModel::Status status)
 		        _progressBar->hide();
 #ifdef _DEBUG
                 auto formatString = _progressBar->format();
-#endif;
+#endif
                 if(_progressBar->format() != "No Data Available")
                     setButtonText("Out-Dated. Press to Compute", Qt::red);
                 _button->show();
@@ -158,5 +155,3 @@ void ButtonProgressBar::showStatus(TableModel::Status status)
         
 	}
 }
-
-
