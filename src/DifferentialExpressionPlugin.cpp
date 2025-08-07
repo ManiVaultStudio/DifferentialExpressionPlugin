@@ -554,7 +554,7 @@ void DifferentialExpressionPlugin::init()
 }
 
 
-void DifferentialExpressionPlugin::setPositionDataset(mv::Dataset<Points> newPoints)
+void DifferentialExpressionPlugin::setPositionDataset(const mv::Dataset<Points>& newPoints)
 {
     if (!newPoints.isValid())
     {
@@ -810,12 +810,7 @@ ViewPlugin* DifferentialExpressionPluginFactory::produce()
 
 mv::DataTypes DifferentialExpressionPluginFactory::supportedDataTypes() const
 {
-    DataTypes supportedTypes;
-
-    // This example analysis plugin is compatible with points datasets
-    supportedTypes.append(PointType);
-
-    return supportedTypes;
+    return { PointType } ;
 }
 
 mv::gui::PluginTriggerActions DifferentialExpressionPluginFactory::getPluginTriggerActions(const mv::Datasets& datasets) const
@@ -829,9 +824,9 @@ mv::gui::PluginTriggerActions DifferentialExpressionPluginFactory::getPluginTrig
     const auto numberOfDatasets = datasets.count();
 
     if (numberOfDatasets >= 1 && PluginFactory::areAllDatasetsOfTheSameType(datasets, PointType)) {
-        auto pluginTriggerAction = new PluginTriggerAction(const_cast<DifferentialExpressionPluginFactory*>(this), this, "Example", "View example data", StyledIcon(), [this, getPluginInstance, datasets](PluginTriggerAction& pluginTriggerAction) -> void {
-            for (auto dataset : datasets)
-                getPluginInstance();
+        auto pluginTriggerAction = new PluginTriggerAction(const_cast<DifferentialExpressionPluginFactory*>(this), this, "Differential expression", "Compute differential expressions between two selections", StyledIcon(), [this, getPluginInstance, datasets](PluginTriggerAction& pluginTriggerAction) -> void {
+            for (const auto& dataset : datasets)
+                getPluginInstance()->setPositionDataset( dataset );
             });
 
         pluginTriggerActions << pluginTriggerAction;

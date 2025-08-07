@@ -41,7 +41,7 @@ public:
     /** This function is called by the core after the view plugin has been created */
     void init() override;
 
-    void setPositionDataset(mv::Dataset<Points> newPoints);
+    void setPositionDataset(const mv::Dataset<Points>& newPoints);
     /** Invoked when the position points dataset changes */
     void positionDatasetChanged();
 
