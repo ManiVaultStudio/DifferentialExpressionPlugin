@@ -62,7 +62,7 @@ namespace local
         else
         {
 #ifdef _DEBUG
-            qDebug() << "ClusterDifferentialExpressionPlugin:Error: requested " << QMetaType::fromType<T>().name() << " but value is of type " << variant.metaType().name();
+            qDebug() << "ClusterDifferentialExpressionPlugin: Error: requested " << QMetaType::fromType<T>().name() << " but value is of type " << variant.metaType().name();
 #endif
             return T();
         }
@@ -363,7 +363,7 @@ void DifferentialExpressionPlugin::init()
         // Visually indicate if the dataset is of the wrong data type and thus cannot be dropped
         if (!dataTypes.contains(dataType)) {
             dropRegions << new DropWidget::DropRegion(this, "Incompatible data", "This type of data is not supported", "exclamation-circle", false);
-            qDebug() << "ClusterDifferentialExpressionPlugin:Incompatible data" << ": " << "This type of data is not supported";
+            qDebug() << "ClusterDifferentialExpressionPlugin: Incompatible data: This type of data is not supported";
         }
         else
         {
@@ -378,7 +378,7 @@ void DifferentialExpressionPlugin::init()
 
                     // Dataset cannot be dropped because it is already loaded
                     dropRegions << new DropWidget::DropRegion(this, "Warning", "Data already loaded", "exclamation-circle", false);
-                    qDebug() << "ClusterDifferentialExpressionPlugin:Warning" << ": " << "Data already loaded";
+                    qDebug() << "ClusterDifferentialExpressionPlugin: Warning: Data already loaded";
                 }
                 else {
 
@@ -423,7 +423,7 @@ void DifferentialExpressionPlugin::init()
 
             selectionA = selectionIndices;
 
-            qDebug() << "ClusterDifferentialExpressionPlugin:Saved selection A.";
+            qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection A.";
             _selectedCellsLabel[0].setText(QString("(%1 cells)").arg(selectionA.size()));
             if (selectionA.size() != 0 && selectionB.size() != 0)
                 _buttonProgressBar->showStatus(TableModel::Status::OutDated);
@@ -438,7 +438,7 @@ void DifferentialExpressionPlugin::init()
             _selectedCellsLabel[1].setText(QString("(%1 cells)").arg(selectionB.size()));
             selectionB = selectionIndices;
 
-            qDebug() << "ClusterDifferentialExpressionPlugin:Saved selection B.";
+            qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection B.";
             if (selectionA.size() != 0 && selectionB.size() != 0)
                 _buttonProgressBar->showStatus(TableModel::Status::OutDated);
         });
@@ -494,7 +494,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
     if (recompute)
     {
-        qDebug() << "ClusterDifferentialExpressionPlugin:Computing dimension ranges";
+        qDebug() << "ClusterDifferentialExpressionPlugin: Computing dimension ranges";
         minValues.resize(numDimensions, std::numeric_limits<float>::max());
         rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
 
@@ -538,7 +538,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
         recompute |= (maxList.size() != numDimensions);
         if (!recompute)
         {
-            qDebug() << "ClusterDifferentialExpressionPlugin:Loading dimension ranges";
+            qDebug() << "ClusterDifferentialExpressionPlugin: Loading dimension ranges";
             // load them from properties
             minValues.resize(numDimensions);
             rescaleValues.resize(numDimensions);
@@ -582,7 +582,7 @@ void DifferentialExpressionPlugin::writeToCSV() const
     // Only continue when the dialog has not been not canceled and the file name is non-empty.
     if (fileName.isNull() || fileName.isEmpty())
     {
-        //    qDebug() << "ClusterDifferentialExpressionPlugin: No data written to disk - File name empty";
+        qDebug() << "ClusterDifferentialExpressionPlugin: No data written to disk - File name empty";
         return;
     }
     else
@@ -612,7 +612,7 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
 
     // Compute differential expr
-    qDebug() << "ClusterDifferentialExpressionPlugin:Computing differential expression.";
+    qDebug() << "ClusterDifferentialExpressionPlugin: Computing differential expression.";
 
     std::ptrdiff_t numDimensions = _points->getNumDimensions();
     std::vector<float> meanA(numDimensions, 0);
