@@ -277,8 +277,6 @@ void DifferentialExpressionPlugin::init()
 
     layout->addWidget(_currentDatasetNameLabel);
 
-    //_tableWidget = new QTableWidget(10, 3, &this->getWidget());
-
     { // toolbar
         QWidget* filterWidget = _filterOnIdAction.createWidget(&mainWidget);
         filterWidget->setContentsMargins(0, 3, 0, 3);
@@ -289,7 +287,6 @@ void DifferentialExpressionPlugin::init()
 
         layout->addLayout(toolBarLayout);
     }
-
 
     { // table view
 

@@ -105,7 +105,6 @@ protected:
     std::vector<float> minValues;
     std::vector<float> rescaleValues;
 
-    int selOpt = 0;
     std::vector<uint32_t> selectionA;
     std::vector<uint32_t> selectionB;
 
