@@ -63,10 +63,13 @@ set(ACTIONS
 set(PLUGIN_SOURCES
     src/DifferentialExpressionPlugin.h
     src/DifferentialExpressionPlugin.cpp
-    src/DifferentialExpressionPlugin.json
 )
 
-source_group(Plugin FILES ${PLUGIN_SOURCES})
+set(PLUGIN_SOURCES_AUX
+    PluginInfo.json
+)
+
+source_group(Plugin FILES ${PLUGIN_SOURCES} ${PLUGIN_SOURCES_AUX})
 source_group(Model FILES ${MODEL})
 source_group(Actions FILES ${ACTIONS})
 source_group(Widget FILES ${WIDGETS})
@@ -76,7 +79,7 @@ source_group(Util FILES ${UTIL})
 # CMake Target
 # -----------------------------------------------------------------------------
 # Create dynamic library for the plugin
-add_library(${PROJECT_NAME} SHARED ${PLUGIN_SOURCES} ${UTIL} ${WIDGETS} ${MODEL} ${ACTIONS})
+add_library(${PROJECT_NAME} SHARED ${PLUGIN_SOURCES} ${PLUGIN_SOURCES_AUX} ${UTIL} ${WIDGETS} ${MODEL} ${ACTIONS})
 
 # -----------------------------------------------------------------------------
 # Target include directories
