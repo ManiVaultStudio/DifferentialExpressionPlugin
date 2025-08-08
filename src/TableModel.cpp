@@ -1,25 +1,28 @@
 #include "TableModel.h"
+
 #include <QApplication>
 #include <QClipboard>
-#include <assert.h>
 #include <QMetaType>
 #include <QLabel>
-//#include <QAbstractItemModelTester>
+
+#include <cassert>
+
 //#define TESTING
 
-namespace 
+#ifdef TESTING
+#include <QAbstractItemModelTester>
+#endif
+
+namespace local
 {
-	namespace local
+    static void fixQStringForClipboard(QString& s, QChar separator)
 	{
-		void fixQStringForClipboard(QString& s, QChar separator)
-		{
-			QChar defaultReplaceChar = ' ';
-			if (separator == defaultReplaceChar)
-				defaultReplaceChar = '_';
-			s.replace('\n', defaultReplaceChar);
-			s.replace('\t', defaultReplaceChar);
-			s.replace(separator, ' ');
-		}
+		QChar defaultReplaceChar = ' ';
+		if (separator == defaultReplaceChar)
+			defaultReplaceChar = '_';
+		s.replace('\n', defaultReplaceChar);
+		s.replace('\t', defaultReplaceChar);
+		s.replace(separator, ' ');
 	}
 }
 

@@ -1,26 +1,21 @@
 #include "ProgressManager.h"
-//#ifdef __APPLE__
-//#include "omp.h"
-////#include </opt/homebrew/opt/libomp/include/omp.h>
-//#else
-//#include <omp.h>
-//#endif
 
-
-#include <omp.h>
-#include <QProgressDialog>
 #include <iostream>
 #include <iomanip>
+#include <cassert>
+#include <stdexcept>
 
+#include <QProgressDialog>
 #include <QProgressBar>
-#include <QMenuBar>
-#include "QApplication"
+#include <QApplication>
 #include <QLabel>
 #include <QMainWindow>
 
+#include <omp.h>
+
 namespace local
 {
-    QMainWindow* getMainWindow()
+    static QMainWindow* getMainWindow()
     {
         foreach(QWidget * widget, qApp->topLevelWidgets())
             if (QMainWindow* mainWindow = qobject_cast<QMainWindow*>(widget))
@@ -77,8 +72,6 @@ void ProgressManager::start(std::size_t size, const std::string &mesg)
 
 	m_available = false;
 	
-	
-	
 	if (m_progressBar)
 	{
 		
@@ -112,7 +105,7 @@ void ProgressManager::setRange( std::size_t size)
 {
 	m_maxRange = size;
 	if (m_maxRange)
-		m_scaleFactor = (1.0f * MAX_RANGE) / m_maxRange;
+		m_scaleFactor = static_cast<float>(MAX_RANGE) / m_maxRange;
 	else
 		m_scaleFactor = 0;
 	m_progress.assign(size, 0);
@@ -239,8 +232,6 @@ void ProgressManager::end()
 	}
 	
 }
-
-
 
 void ProgressManager::setLabelText(const QString& mesg)
 {

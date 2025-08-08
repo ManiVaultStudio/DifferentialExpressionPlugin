@@ -7,19 +7,19 @@
 #include <QDebug>
 #include <QMimeData>
 #include <QFile>
-
 #include <QPushButton>
-
-#include <iostream>
-#include <omp.h>
-
-#include "WordWrapHeaderView.h"
 #include <QFileDialog>
 
+#include "WordWrapHeaderView.h"
 
+#include <cassert>
+#include <cmath>
+#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <limits>
+#include <algorithm>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
@@ -27,7 +27,7 @@ using namespace mv;
 
 namespace local
 {
-    bool is_valid_QByteArray(const QByteArray& state)
+    static bool is_valid_QByteArray(const QByteArray& state)
     {
         QByteArray data = state;
         QDataStream stream(&data, QIODevice::ReadOnly);
@@ -277,8 +277,6 @@ void DifferentialExpressionPlugin::init()
 
     layout->addWidget(_currentDatasetNameLabel);
 
-    //_tableWidget = new QTableWidget(10, 3, &this->getWidget());
-
     { // toolbar
         QWidget* filterWidget = _filterOnIdAction.createWidget(&mainWidget);
         filterWidget->setContentsMargins(0, 3, 0, 3);
@@ -289,7 +287,6 @@ void DifferentialExpressionPlugin::init()
 
         layout->addLayout(toolBarLayout);
     }
-
 
     { // table view
 
@@ -554,44 +551,10 @@ void DifferentialExpressionPlugin::init()
      // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);
 
-    // Alternatively, classes which derive from hdsp::EventListener (all plugins do) can also respond to events
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetAdded));
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetDataChanged));
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetRemoved));
-    _eventListener.addSupportedEventType(static_cast<std::uint32_t>(EventType::DatasetDataSelectionChanged));
-    _eventListener.registerDataEventByType(PointType, std::bind(&DifferentialExpressionPlugin::onDataEvent, this, std::placeholders::_1));
-
 }
 
-void DifferentialExpressionPlugin::onDataEvent(mv::DatasetEvent* dataEvent)
-{
-    // Get smart pointer to dataset that changed
-    const auto changedDataSet = dataEvent->getDataset();
 
-    // Get GUI name of the dataset that changed
-    const auto datasetGuiName = changedDataSet->getGuiName();
-
-    // The data event has a type so that we know what type of data event occurred (e.g. data added, changed, removed, renamed, selection changes)
-    switch (dataEvent->getType()) {
-
-        // A points dataset was added
-    case EventType::DatasetAdded:
-    {
-        // Cast the data event to a data added event
-        const auto dataAddedEvent = static_cast<DatasetAddedEvent*>(dataEvent);
-
-        // Get the GUI name of the added points dataset and print to the console
-        qDebug() << datasetGuiName << "was added";
-
-        break;
-    }
-
-    default:
-        break;
-    }
-}
-
-void DifferentialExpressionPlugin::setPositionDataset(mv::Dataset<Points> newPoints)
+void DifferentialExpressionPlugin::setPositionDataset(const mv::Dataset<Points>& newPoints)
 {
     if (!newPoints.isValid())
     {
@@ -599,18 +562,7 @@ void DifferentialExpressionPlugin::setPositionDataset(mv::Dataset<Points> newPoi
         return;
     }
 
-
-    auto pointDatasets = mv::data().getAllDatasets(std::vector<mv::DataType> {PointType});
-    /*
-    if(_points.isValid())
-    {
-        _points->removeGroupIndexAction(_selectionTriggerActions);
-    }
-    */
     _points = newPoints;
-    /*
-    _points->addGroupIndexAction(_selectionTriggerActions, true);
-    */
 
     auto newDatasetName = _points->getGuiName();
 
@@ -656,7 +608,6 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
         std::vector<std::size_t> count(numDimensions, 0);
 
-
         local::visitElements(_points, [this, &count](auto row, auto column, auto value)->void
             {
                 if (value > rescaleValues[column])
@@ -700,12 +651,8 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 #pragma  omp parallel for
             for (std::ptrdiff_t i = 0; i < numDimensions; ++i)
             {
-                auto v1 = minList[i];
-                auto m1 = v1.toFloat();
-                auto v2 = maxList[i];
-                auto m2 = v2.toFloat();
-                minValues[i] = m1;
-                rescaleValues[i] = m2;
+                minValues[i]        = minList[i].toFloat();
+                rescaleValues[i]    = maxList[i].toFloat();
             }
 
         }
@@ -847,15 +794,14 @@ void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelecti
     tableView_clicked(selected.indexes().first());
 }
 
-/******************************************************************************
- * Plugin Factory
- ******************************************************************************/
+// =============================================================================
+// Factory
+// =============================================================================
 
 DifferentialExpressionPluginFactory::DifferentialExpressionPluginFactory()
 {
     setIconByName("table");
 }
-
 
 ViewPlugin* DifferentialExpressionPluginFactory::produce()
 {
@@ -864,12 +810,7 @@ ViewPlugin* DifferentialExpressionPluginFactory::produce()
 
 mv::DataTypes DifferentialExpressionPluginFactory::supportedDataTypes() const
 {
-    DataTypes supportedTypes;
-
-    // This example analysis plugin is compatible with points datasets
-    supportedTypes.append(PointType);
-
-    return supportedTypes;
+    return { PointType } ;
 }
 
 mv::gui::PluginTriggerActions DifferentialExpressionPluginFactory::getPluginTriggerActions(const mv::Datasets& datasets) const
@@ -883,9 +824,9 @@ mv::gui::PluginTriggerActions DifferentialExpressionPluginFactory::getPluginTrig
     const auto numberOfDatasets = datasets.count();
 
     if (numberOfDatasets >= 1 && PluginFactory::areAllDatasetsOfTheSameType(datasets, PointType)) {
-        auto pluginTriggerAction = new PluginTriggerAction(const_cast<DifferentialExpressionPluginFactory*>(this), this, "Example", "View example data", StyledIcon(), [this, getPluginInstance, datasets](PluginTriggerAction& pluginTriggerAction) -> void {
-            for (auto dataset : datasets)
-                getPluginInstance();
+        auto pluginTriggerAction = new PluginTriggerAction(const_cast<DifferentialExpressionPluginFactory*>(this), this, "Differential expression", "Compute differential expressions between two selections", StyledIcon(), [this, getPluginInstance, datasets](PluginTriggerAction& pluginTriggerAction) -> void {
+            for (const auto& dataset : datasets)
+                getPluginInstance()->setPositionDataset( dataset );
             });
 
         pluginTriggerActions << pluginTriggerAction;

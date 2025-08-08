@@ -7,26 +7,19 @@ import shutil
 import pathlib
 import subprocess
 from rules_support import PluginBranchInfo
-import re
 
-# def compatibility(os, compiler, compiler_version):
-    # # On macos fallback to zlib apple-clang 13
-    # if os == "Macos" and compiler == "apple-clang" and bool(re.match("14.*", compiler_version)):  
-        # print("Compatibility match")
-        # return ["zlib/1.3:compiler.version=13"]
-    # return None
 
 class DifferentialExpressionPluginConan(ConanFile):
     """Class to package DifferentialExpressionPlugin using conan
 
     Packages both RELEASE and DEBUG.
-    Uses rules_support (github.com/hdps/rulessupport) to derive
+    Uses rules_support (github.com/ManiVaultStudio/rulessupport) to derive
     versioninfo based on the branch naming convention
-    as described in https://github.com/hdps/core/wiki/Branch-naming-rules
+    as described in https://github.com/ManiVaultStudio/core/wiki/Branch-naming-rules
     """
 
     name = "DifferentialExpressionPlugin"
-    description = "A plugin for viewing differential expressions in the high-dimensional plugin system (HDPS)."
+    description = "A plugin for viewing differential expressions in the high-dimensional plugin system (ManiVaultStudio)."
     topics = ("mv", "plugin", "view", "differential", "expression")
     url = "https://github.com/ManiVaultStudio/DifferentialExpressionPlugin"
     author = "B. van Lew b.van_lew@lumc.nl"  # conan recipe author
@@ -40,7 +33,7 @@ class DifferentialExpressionPluginConan(ConanFile):
     options = {"shared": [True, False], "fPIC": [True, False]}
     default_options = {"shared": True, "fPIC": True}
 
-    # Qt requirement is inherited from hdps-core
+    # Qt requirement is inherited from ManiVaultStudio-core
 
     scm = {
         "type": "git",
@@ -79,20 +72,14 @@ class DifferentialExpressionPluginConan(ConanFile):
         pass
 
     def system_requirements(self):
-        # if os_info.is_macos:
-            # installer = SystemPackageTool()
-            # installer.install("libomp")
-            # proc = subprocess.run(
-                # "brew --prefix libomp", shell=True, capture_output=True
-            # )
-            # subprocess.run(
-                # f"ln {proc.stdout.decode('UTF-8').strip()}/lib/libomp.dylib /usr/local/lib/libomp.dylib",
-                # shell=True,
-            # )
-        # if os_info.is_linux:
-            # self.run("sudo apt update && sudo apt install -y libtbb2-dev")
-        pass
-
+        if os_info.is_macos:
+            installer = SystemPackageTool()
+            installer.install("libomp")
+            proc = subprocess.run("brew --prefix libomp",  shell=True, capture_output=True)
+            subprocess.run(f"ln {proc.stdout.decode('UTF-8').strip()}/lib/libomp.dylib /usr/local/lib/libomp.dylib", shell=True)
+        if os_info.is_linux:
+            self.run("sudo apt update && sudo apt install -y libtbb-dev")
+            
     def config_options(self):
         if self.settings.os == "Windows":
             del self.options.fPIC
@@ -123,6 +110,11 @@ class DifferentialExpressionPluginConan(ConanFile):
 
         # Set some build options
         tc.variables["MV_UNITY_BUILD"] = "ON"
+
+        if os_info.is_macos:
+            proc = subprocess.run("brew --prefix libomp", shell=True, capture_output=True)
+            prefix_path = f"{proc.stdout.decode('UTF-8').strip()}"
+            tc.variables["OpenMP_ROOT"] = prefix_path
 
         tc.generate()
 
