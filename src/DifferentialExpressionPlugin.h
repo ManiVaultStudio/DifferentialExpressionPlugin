@@ -87,6 +87,7 @@ protected:
     TriggerAction                           _updateStatisticsAction;
     StringAction                            _filterOnIdAction;
     StringAction                            _selectedIdAction;
+    int                                     _totalTableColumns;
     QSharedPointer<TableModel>              _tableItemModel;
     QPointer<TableSortFilterProxyModel>     _sortFilterProxyModel;
     TableView*                              _tableView;

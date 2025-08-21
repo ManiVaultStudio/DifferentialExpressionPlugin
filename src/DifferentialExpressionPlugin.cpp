@@ -187,6 +187,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _updateStatisticsAction(this, "Calculate Differential Expression"),
     _selectionTriggerActions(this, getGuiName(), "Set Selection %1"),
     _sortFilterProxyModel(new TableSortFilterProxyModel),
+    _totalTableColumns(0),
     _tableItemModel(new TableModel(nullptr, false)),
     _tableView(nullptr),
     _buttonProgressBar(nullptr),
@@ -323,6 +324,9 @@ void DifferentialExpressionPlugin::init()
         layout->addWidget(_buttonProgressBar);
     }
 
+    _totalTableColumns = 6;
+
+    _tableItemModel->startModelBuilding(_totalTableColumns, 0);
     _tableItemModel->setHorizontalHeader(0, QString("ID"));
     _tableItemModel->setHorizontalHeader(1, QString("DE"));
     _tableItemModel->setHorizontalHeader(2, QString("Mean (Sel. 1)"));
@@ -660,21 +664,22 @@ void DifferentialExpressionPlugin::computeDE()
         }
     }
 
-    const int totalColumnCount = 6; // with two median columns
     const auto& dimensionNames = _points->getDimensionNames();
 
-    _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
+    _tableItemModel->startModelBuilding(_totalTableColumns, numDimensions);
 #pragma omp  parallel for schedule(dynamic,1)
     for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
     {
-        std::vector<QVariant> dataVector(totalColumnCount);
-        dataVector[0] = dimensionNames[dimension];
+        std::vector<QVariant> dataVector = {
+            dimensionNames[dimension],
+            local::fround(meanA[dimension] - meanB[dimension], 3),
+            local::fround(meanA[dimension], 3),
+            local::fround(meanB[dimension], 3),
+            local::fround(medianA[dimension], 3),
+            local::fround(medianB[dimension], 3),
+        };
 
-        dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 3);
-        dataVector[2] = local::fround(meanA[dimension], 3);
-        dataVector[3] = local::fround(meanB[dimension], 3);
-        dataVector[4] = local::fround(medianA[dimension], 3);
-        dataVector[5] = local::fround(medianB[dimension], 3);
+        assert(dataVector.size() == _totalTableColumns);
 
         _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
     }

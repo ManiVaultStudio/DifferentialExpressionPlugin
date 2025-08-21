@@ -138,7 +138,6 @@ void TableModel::resize(std::size_t rows, std::size_t columns)
 	
 	if (rows != m_data.size())
 	{
-		
 		layoutToBeChanged = true;
 	}
 
