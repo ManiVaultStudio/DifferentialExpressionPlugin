@@ -414,7 +414,7 @@ void DifferentialExpressionPlugin::init()
     }
 
     auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, const QString& selectionName, QLabel& label) {
-        selection = _points->getSelection()->getSelectionIndices();
+        selection = _points->getSelectionIndices();
         label.setText(QString("(%1 items)").arg(selection.size()));
 
         qDebug() << QString("ClusterDifferentialExpressionPlugin: Saved selection %1.").arg(selectionName);
@@ -605,8 +605,6 @@ void DifferentialExpressionPlugin::computeDE()
         return;
 
     _tableItemModel->invalidate();
-    auto selectionDataset = _points->getSelection();
-    std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
 
     // Compute differential expr
     qDebug() << "ClusterDifferentialExpressionPlugin: Computing differential expression.";
@@ -690,16 +688,12 @@ void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
         return;
     try
     {
-        QModelIndex firstColumn = index.sibling(index.row(), 0);
-
-        QString selectedGeneName = firstColumn.data().toString();
-        QModelIndex temp = _sortFilterProxyModel->mapToSource(firstColumn);
-        auto row = temp.row();
-        _selectedIdAction.setString(selectedGeneName);
+        const QModelIndex firstColumn = index.sibling(index.row(), 0);
+        _selectedIdAction.setString(firstColumn.data().toString());
     }
-    catch (...)
+    catch (...) // catch everything
     {
-        // catch everything
+        qDebug() << "DifferentialExpressionPlugin::tableView_clicked -> something went wrong :(";
     }
 }
 
