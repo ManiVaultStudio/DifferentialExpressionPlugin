@@ -419,6 +419,11 @@ void DifferentialExpressionPlugin::init()
 
     auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, const QString& selectionName, QLabel& label) {
         selection = _points->getSelectionIndices();
+
+        std::sort(selection.begin(), selection.end());
+        const auto last = std::unique(selection.begin(), selection.end());
+        selection.erase(last, selection.end());
+
         label.setText(QString("(%1 items)").arg(selection.size()));
 
         qDebug() << QString("ClusterDifferentialExpressionPlugin: Saved selection %1 : 2% items.").arg(selectionName, selection.size());
