@@ -200,7 +200,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     // Align text in the center
     _currentDatasetNameLabel->setAlignment(Qt::AlignCenter);
 
-    _normAction.setToolTip("Rescale the data: (x - min) / (max - min)");
+    _normAction.setToolTip("Rescale the data: (selection_mean - global_min) / (global_max - global_min)");
 
     { // copy to Clipboard
 
