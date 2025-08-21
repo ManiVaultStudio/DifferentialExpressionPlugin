@@ -634,6 +634,10 @@ void DifferentialExpressionPlugin::computeDE()
             valuesB[column].push_back(value); // for median
         }, QString("Computing mean expression values for Selection 2"));
 
+    auto computeMedian = [](std::vector<float>& vec) -> float {
+        std::nth_element(vec.begin(), vec.begin() + vec.size() / 2, vec.end());
+        return vec[vec.size() / 2];
+        };
 
 #pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
@@ -643,25 +647,17 @@ void DifferentialExpressionPlugin::computeDE()
         meanB[d] /= _selectionB.size();
 
         // then min max - optional by toggle action
-        if (_norm)
-        {
+        if (_norm) {
             meanA[d] = (meanA[d] - _minValues[d]) * _rescaleValues[d];
             meanB[d] = (meanB[d] - _minValues[d]) * _rescaleValues[d];
         }
 
         // compute median
-        const auto& vectorA = valuesA[d];
-        const auto& vectorB = valuesB[d];
-
-        std::nth_element(vectorA.begin(), vectorA.begin() + vectorA.size() / 2, vectorA.end());
-        medianA[d] = vectorA[vectorA.size() / 2];
-
-        std::nth_element(vectorB.begin(), vectorB.begin() + vectorB.size() / 2, vectorB.end());
-        medianB[d] = vectorB[vectorB.size() / 2];
+        medianA[d] = computeMedian(valuesA[d]);
+        medianB[d] = computeMedian(valuesB[d]);
 
         // then min max - optional by toggle action
-        if (_norm)
-        {
+        if (_norm) {
             medianA[d] = (medianA[d] - _minValues[d]) * _rescaleValues[d];
             medianB[d] = (medianB[d] - _minValues[d]) * _rescaleValues[d];
         }
