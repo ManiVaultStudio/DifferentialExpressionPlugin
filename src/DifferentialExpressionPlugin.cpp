@@ -66,7 +66,7 @@ namespace local
         }
     }
     template <typename FunctionObject>
-    void visitElements(Dataset<Points> points, FunctionObject functionObject, const QString& description)
+    void visitAllElements(Dataset<Points> points, FunctionObject functionObject, const QString& description)
     {
         auto& task = points->getTask();
         task.setName(description);
@@ -136,16 +136,18 @@ namespace local
             const auto& _values = points->getSparseData().getValues();
 
             auto _numCols = points->getSparseData().getNumCols();
+            const size_t numRows = rows.size();
 
-            task.setSubtasks(rows.size());
-            for (const auto r : rows)
+            task.setSubtasks(numRows);
+            for (std::size_t numRow = 0; numRow < numRows; ++numRow)
             {
+                const auto r = rows[numRow];
                 const size_t nzEnd = _rowPointers[r + 1];
                 for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
                 {
                     const auto value = _values[nzIndex];
                     const auto column = _colIndices[nzIndex];
-                    functionObject(r, column, value);
+                    functionObject(r, numRow, column, value);
                 }
 
                 task.subtaskFinished(r);
@@ -157,15 +159,17 @@ namespace local
         const auto numDimensions = points->getNumDimensions();
         points->visitData([&rows, &task, numDimensions, functionObject](auto data)
             {
-                task.setSubtasks(rows.size());
-                for (const auto r : rows)
+                const size_t numRows = rows.size();
+                task.setSubtasks(numRows);
+                for (std::size_t numRow = 0; numRow < numRows; ++numRow)
                 {
+                    const auto r = rows[numRow];
                     for (std::size_t column = 0; column < numDimensions; ++column)
                     {
                         const auto value = data[r][column];
-                        functionObject(r, column, value);
+                        functionObject(r, numRow, column, value);
                     }
-                    task.subtaskFinished(r);
+                    task.subtaskFinished(numRow);
                 }
                 task.setFinished();
             });
@@ -426,7 +430,7 @@ void DifferentialExpressionPlugin::init()
 
         label.setText(QString("(%1 items)").arg(selection.size()));
 
-        qDebug() << QString("ClusterDifferentialExpressionPlugin: Saved selection %1 : 2% items.").arg(selectionName, selection.size());
+        qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection " << selectionName << " with " << selection.size() << " items.";
 
         if (_selectionA.size() != 0 && _selectionB.size() != 0)
             _buttonProgressBar->showStatus(TableModel::Status::OutDated);
@@ -507,7 +511,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
         std::vector<std::size_t> count(numDimensions, 0);
 
-        local::visitElements(_points, [this, &count](auto row, auto column, auto value)->void
+        local::visitAllElements(_points, [this, &count](auto row, auto column, auto value)->void
             {
                 if (value > _rescaleValues[column])
                     _rescaleValues[column] = value;
@@ -617,55 +621,64 @@ void DifferentialExpressionPlugin::computeDE()
     // Compute differential expr
     qDebug() << "ClusterDifferentialExpressionPlugin: Computing differential expression.";
 
-    std::ptrdiff_t numDimensions = _points->getNumDimensions();
-    std::vector<float> meanA(numDimensions, 0);
-    std::vector<float> meanB(numDimensions, 0);
+    const std::ptrdiff_t numDimensions = _points->getNumDimensions();
+    const size_t selectionSizeA = _selectionA.size();
+    const size_t selectionSizeB = _selectionB.size();
 
-    // for median, collect per dimension values TODO: maybe look for median dynamically, instead of store the vectors
-    std::vector<std::vector<float>> valuesA(numDimensions);
-    std::vector<std::vector<float>> valuesB(numDimensions);
-    std::vector<float> medianA(numDimensions, 0);
-    std::vector<float> medianB(numDimensions, 0);
+    // for mean, sum all values and divide by size later
+    std::vector<float> meansA(numDimensions, 0);
+    std::vector<float> meansB(numDimensions, 0);
 
-    // first compute the sum of values per dimension for _selectionA and _selectionB
-    local::visitElements(_points, _selectionA, [&meanA, &valuesA](auto row, auto column, auto value)
-        {
-            meanA[column] += value;
-            valuesA[column].push_back(value);// for median
-        }, QString("Computing mean expression values for Selection 1"));
+    // for median, collect per dimension values and sprt later
+    // TODO: maybe look for median dynamically, instead of store the vectors
+    std::vector<std::vector<float>> valuesA(numDimensions, std::vector<float>(selectionSizeA, 0));
+    std::vector<std::vector<float>> valuesB(numDimensions, std::vector<float>(selectionSizeB, 0));
+    std::vector<float> mediansA(numDimensions, 0);
+    std::vector<float> mediansB(numDimensions, 0);
 
-    local::visitElements(_points, _selectionB, [&meanB, &valuesB](auto row, auto column, auto value)
-        {
-            meanB[column] += value;
-            valuesB[column].push_back(value); // for median
-        }, QString("Computing mean expression values for Selection 2"));
+    auto computeAvgHelper = [&](const std::vector<uint32_t>& selectionIDs, std::vector<float>& means, std::vector<std::vector<float>>& valCopies, const int selectionName) -> void {
+        local::visitElements(_points, selectionIDs, [&means, &valCopies](auto rowID, auto numRowLocal, auto column, auto value)
+            {
+                means[column] += value;
+                valCopies[column][numRowLocal] = value; // for median
+            }, QString("Computing mean expression values for selection %1").arg(selectionName));
+        };
 
     auto computeMedian = [](std::vector<float>& vec) -> float {
         std::nth_element(vec.begin(), vec.begin() + vec.size() / 2, vec.end());
         return vec[vec.size() / 2];
         };
 
+    auto normAvg = [&](const std::vector<float>& avgs, const std::ptrdiff_t dim) -> float {
+        return (avgs[dim] - _minValues[dim]) * _rescaleValues[dim];
+        };
+
+    // first compute the sum of values per dimension for _selectionA and _selectionB
+    // and copy the respective expresion values for median computation (requires sorting)
+    computeAvgHelper(_selectionA, meansA, valuesA, 1);
+    computeAvgHelper(_selectionB, meansB, valuesB, 1);
+
 #pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
     {
         // first divide means by number of rows
-        meanA[d] /= _selectionA.size();
-        meanB[d] /= _selectionB.size();
+        meansA[d] /= selectionSizeA;
+        meansB[d] /= selectionSizeB;
 
         // then min max - optional by toggle action
         if (_norm) {
-            meanA[d] = (meanA[d] - _minValues[d]) * _rescaleValues[d];
-            meanB[d] = (meanB[d] - _minValues[d]) * _rescaleValues[d];
+            meansA[d] = normAvg(meansA, d);
+            meansB[d] = normAvg(meansB, d);
         }
 
         // compute median
-        medianA[d] = computeMedian(valuesA[d]);
-        medianB[d] = computeMedian(valuesB[d]);
+        mediansA[d] = computeMedian(valuesA[d]);
+        mediansB[d] = computeMedian(valuesB[d]);
 
         // then min max - optional by toggle action
         if (_norm) {
-            medianA[d] = (medianA[d] - _minValues[d]) * _rescaleValues[d];
-            medianB[d] = (medianB[d] - _minValues[d]) * _rescaleValues[d];
+            mediansA[d] = normAvg(mediansA, d);
+            mediansB[d] = normAvg(mediansB, d);
         }
     }
 
@@ -677,11 +690,11 @@ void DifferentialExpressionPlugin::computeDE()
     {
         std::vector<QVariant> dataVector = {
             dimensionNames[dimension],
-            local::fround(meanA[dimension] - meanB[dimension], 3),
-            local::fround(meanA[dimension], 3),
-            local::fround(meanB[dimension], 3),
-            local::fround(medianA[dimension], 3),
-            local::fround(medianB[dimension], 3),
+            local::fround(meansA[dimension] - meansB[dimension], 3),
+            local::fround(meansA[dimension], 3),
+            local::fround(meansB[dimension], 3),
+            local::fround(mediansA[dimension], 3),
+            local::fround(mediansB[dimension], 3),
         };
 
         assert(dataVector.size() == _totalTableColumns);
