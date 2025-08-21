@@ -1,21 +1,20 @@
 #pragma once
 
-#include <ViewPlugin.h>
-
-#include "LoadedDatasetsAction.h"
-#include "MultiTriggerAction.h"
-
 #include <Dataset.h>
+#include <ViewPlugin.h>
+#include <PointData/PointData.h>
 #include <widgets/DropWidget.h>
 
-#include <PointData/PointData.h>
+#include "ButtonProgressBar.h"
+#include "LoadedDatasetsAction.h"
+#include "MultiTriggerAction.h"
+#include "TableModel.h"
+#include "TableSortFilterProxyModel.h"
+#include "TableView.h"
+
+#include <array>
 
 #include <QTableWidget>
-
-#include "TableSortFilterProxyModel.h"
-#include "TableModel.h"
-#include "TableView.h"
-#include "ButtonProgressBar.h"
 
 using namespace mv::plugin;
 using namespace mv::gui;
@@ -73,42 +72,44 @@ protected slots:
 
 
 protected:
-    DropWidget*                              _dropWidget;                /** Widget for drag and drop behavior */
-    mv::Dataset<Points>                      _points;                    /** Points smart pointer */
-    QString                                  _currentDatasetName;        /** Name of the current dataset */
-    QLabel*                                  _currentDatasetNameLabel;   /** Label that show the current dataset name */
+    using QLabelArray2 = std::array<QLabel, MultiTriggerAction::Size>;
 
-    MultiTriggerAction                       _selectionTriggerActions;
-    QLabel                                   _selectedCellsLabel[MultiTriggerAction::Size];  
+    DropWidget*                             _dropWidget;                /** Widget for drag and drop behavior */
+    mv::Dataset<Points>                     _points;                    /** Points smart pointer */
+    QString                                 _currentDatasetName;        /** Name of the current dataset */
+    QLabel*                                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
+
+    MultiTriggerAction                      _selectionTriggerActions;
+    QLabelArray2                            _selectedCellsLabel;
    
-    LoadedDatasetsAction                     _loadedDatasetsAction;
+    LoadedDatasetsAction                    _loadedDatasetsAction;
 
-    TriggerAction                            _updateStatisticsAction;
-    StringAction                             _filterOnIdAction;
-    StringAction                             _selectedIdAction;
-    QSharedPointer<TableModel>               _tableItemModel;
-    QPointer<TableSortFilterProxyModel>      _sortFilterProxyModel;
-    TableView*                               _tableView;
-    QPointer<ButtonProgressBar>              _buttonProgressBar;
-    TriggerAction                            _copyToClipboardAction;
-    TriggerAction                            _saveToCsvAction;
+    TriggerAction                           _updateStatisticsAction;
+    StringAction                            _filterOnIdAction;
+    StringAction                            _selectedIdAction;
+    QSharedPointer<TableModel>              _tableItemModel;
+    QPointer<TableSortFilterProxyModel>     _sortFilterProxyModel;
+    TableView*                              _tableView;
+    QPointer<ButtonProgressBar>             _buttonProgressBar;
+    TriggerAction                           _copyToClipboardAction;
+    TriggerAction                           _saveToCsvAction;
 
-    QVector<WidgetAction*>                   _serializedActions;
-    QByteArray                               _headerState;
+    QVector<WidgetAction*>                  _serializedActions;
+    QByteArray                              _headerState;
 
 
-    std::vector<QTableWidgetItem*>           _geneTableItems;
-    std::vector<QTableWidgetItem*>           _diffTableItems;
+    std::vector<QTableWidgetItem*>          _geneTableItems;
+    std::vector<QTableWidgetItem*>          _diffTableItems;
 
-    std::vector<float> minValues;
-    std::vector<float> rescaleValues;
+    std::vector<float>                      _minValues;
+    std::vector<float>                      _rescaleValues;
 
-    std::vector<uint32_t> selectionA;
-    std::vector<uint32_t> selectionB;
+    std::vector<uint32_t>                   _selectionA;
+    std::vector<uint32_t>                   _selectionB;
 
     // TEMP: toggle for normalization within the loaded dataset
-    ToggleAction _normAction; // min max normalization
-    bool _norm = false;
+    ToggleAction                            _normAction; // min max normalization
+    bool                                    _norm = false;
 };
 
 

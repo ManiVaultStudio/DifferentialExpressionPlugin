@@ -1,7 +1,5 @@
 #include "DifferentialExpressionPlugin.h"
 
-#include <event/Event.h>
-
 #include <DatasetsMimeData.h>
 
 #include <QDebug>
@@ -409,44 +407,41 @@ void DifferentialExpressionPlugin::init()
         _dropWidget->setShowDropIndicator(newDatasetName.isEmpty());
         });
 
-    for (std::size_t i = 0; i < MultiTriggerAction::Size; ++i)
+    for (std::size_t i = 0; i < _selectedCellsLabel.size(); ++i)
     {
         _selectedCellsLabel[i].setText(QString("(%1 items)").arg(0));
         _selectedCellsLabel[i].setAlignment(Qt::AlignHCenter);
     }
 
-    connect(_selectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this]()
+    auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, const QString& selectionName, QLabel& label) {
+        selection = _points->getSelection()->getSelectionIndices();
+        label.setText(QString("(%1 items)").arg(selection.size()));
+
+        qDebug() << QString("ClusterDifferentialExpressionPlugin: Saved selection %1.").arg(selectionName);
+
+        if (_selectionA.size() != 0 && _selectionB.size() != 0)
+            _buttonProgressBar->showStatus(TableModel::Status::OutDated);
+
+        };
+
+    connect(_selectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices]()
         {
             if (!_points.isValid())
                 return;
 
-            auto selectionDataset = _points->getSelection();
-            std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
-
-            selectionA = selectionIndices;
-
-            qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection A.";
-            _selectedCellsLabel[0].setText(QString("(%1 cells)").arg(selectionA.size()));
-            if (selectionA.size() != 0 && selectionB.size() != 0)
-                _buttonProgressBar->showStatus(TableModel::Status::OutDated);
+            updateSelectionIndices(_selectionA, "A", _selectedCellsLabel[0]);
         });
 
-    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this]()
+    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, updateSelectionIndices]()
         {
             if (!_points.isValid())
                 return;
-            auto selectionDataset = _points->getSelection();
-            std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
-            _selectedCellsLabel[1].setText(QString("(%1 cells)").arg(selectionB.size()));
-            selectionB = selectionIndices;
 
-            qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection B.";
-            if (selectionA.size() != 0 && selectionB.size() != 0)
-                _buttonProgressBar->showStatus(TableModel::Status::OutDated);
+            updateSelectionIndices(_selectionB, "B", _selectedCellsLabel[1]);
         });
 
     QGridLayout* selectionLayout = new QGridLayout();
-    for (std::size_t i = 0; i < MultiTriggerAction::Size; ++i)
+    for (std::size_t i = 0; i < _selectedCellsLabel.size(); ++i)
     {
         selectionLayout->addWidget(_selectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 0, i);
         selectionLayout->addWidget(&_selectedCellsLabel[i], 1, i);
@@ -469,7 +464,7 @@ void DifferentialExpressionPlugin::setPositionDataset(const mv::Dataset<Points>&
 
     _points = newPoints;
 
-    auto newDatasetName = _points->getGuiName();
+    const auto newDatasetName = _points->getGuiName();
 
     // Update the current dataset name label
     _currentDatasetNameLabel->setText(QString("Current points dataset: %1").arg(newDatasetName));
@@ -497,19 +492,19 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
     if (recompute)
     {
         qDebug() << "ClusterDifferentialExpressionPlugin: Computing dimension ranges";
-        minValues.resize(numDimensions, std::numeric_limits<float>::max());
-        rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
+        _minValues.resize(numDimensions, std::numeric_limits<float>::max());
+        _rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
 
-        auto numPoints = _points->getNumPoints();
+        const auto numPoints = _points->getNumPoints();
 
         std::vector<std::size_t> count(numDimensions, 0);
 
         local::visitElements(_points, [this, &count](auto row, auto column, auto value)->void
             {
-                if (value > rescaleValues[column])
-                    rescaleValues[column] = value;
-                if (value < minValues[column])
-                    minValues[column] = value;
+                if (value > _rescaleValues[column])
+                    _rescaleValues[column] = value;
+                if (value < _minValues[column])
+                    _minValues[column] = value;
                 count[column]++;
             }, QString("Determine value ranges"));
 
@@ -520,16 +515,16 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
         {
             if (count[d] < numPoints)
             {
-                if (minValues[d] > 0)
-                    minValues[d] = 0;
-                if (rescaleValues[d] < 0)
-                    minValues[d] = 0;
+                if (_minValues[d] > 0)
+                    _minValues[d] = 0;
+                if (_rescaleValues[d] < 0)
+                    _minValues[d] = 0;
             }
         }
 
         // store min and max values in the properties
-        dimensionStatisticsMap["min"] = QVariantList(minValues.cbegin(), minValues.cend());
-        dimensionStatisticsMap["max"] = QVariantList(rescaleValues.cbegin(), rescaleValues.cend());
+        dimensionStatisticsMap["min"] = QVariantList(_minValues.cbegin(), _minValues.cend());
+        dimensionStatisticsMap["max"] = QVariantList(_rescaleValues.cbegin(), _rescaleValues.cend());
         _points->setProperty("Dimension Statistics", dimensionStatisticsMap);
     }
     else
@@ -542,13 +537,13 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
         {
             qDebug() << "ClusterDifferentialExpressionPlugin: Loading dimension ranges";
             // load them from properties
-            minValues.resize(numDimensions);
-            rescaleValues.resize(numDimensions);
+            _minValues.resize(numDimensions);
+            _rescaleValues.resize(numDimensions);
 #pragma  omp parallel for
             for (std::ptrdiff_t i = 0; i < numDimensions; ++i)
             {
-                minValues[i]        = minList[i].toFloat();
-                rescaleValues[i]    = maxList[i].toFloat();
+                _minValues[i]        = minList[i].toFloat();
+                _rescaleValues[i]    = maxList[i].toFloat();
             }
 
         }
@@ -558,11 +553,11 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 #pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
     {
-        float diff = (rescaleValues[d] - minValues[d]);
-        if (diff != 0)
-            rescaleValues[d] = 1.0f / (rescaleValues[d] - minValues[d]);
+        const float diff = (_rescaleValues[d] - _minValues[d]);
+        if (std::fabs(diff) > 1e-6f)
+            _rescaleValues[d] = 1.0f / diff;
         else
-            rescaleValues[d] = 1.0f;
+            _rescaleValues[d] = 1.0f;
     }
 
     qDebug() << "DifferentialExpressionPlugin: Loaded " << numDimensions << " dimensions.";
@@ -626,14 +621,14 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> medianA(numDimensions, 0);
     std::vector<float> medianB(numDimensions, 0);
 
-    // first compute the sum of values per dimension for selectionA and selectionB
-    local::visitElements(_points, selectionA, [&meanA, &valuesA](auto row, auto column, auto value)
+    // first compute the sum of values per dimension for _selectionA and _selectionB
+    local::visitElements(_points, _selectionA, [&meanA, &valuesA](auto row, auto column, auto value)
         {
             meanA[column] += value;
             valuesA[column].push_back(value);// for median
         }, QString("Computing mean expression values for Selection 1"));
 
-    local::visitElements(_points, selectionB, [&meanB, &valuesB](auto row, auto column, auto value)
+    local::visitElements(_points, _selectionB, [&meanB, &valuesB](auto row, auto column, auto value)
         {
             meanB[column] += value;
             valuesB[column].push_back(value); // for median
@@ -644,19 +639,19 @@ void DifferentialExpressionPlugin::computeDE()
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
     {
         // first divide means by number of rows
-        meanA[d] /= selectionA.size();
-        meanB[d] /= selectionB.size();
+        meanA[d] /= _selectionA.size();
+        meanB[d] /= _selectionB.size();
 
         // then min max - optional by toggle action
         if (_norm)
         {
-            meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
-            meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
+            meanA[d] = (meanA[d] - _minValues[d]) * _rescaleValues[d];
+            meanB[d] = (meanB[d] - _minValues[d]) * _rescaleValues[d];
         }
 
         // compute median
-        auto& vectorA = valuesA[d];
-        auto& vectorB = valuesB[d];
+        const auto& vectorA = valuesA[d];
+        const auto& vectorB = valuesB[d];
 
         std::nth_element(vectorA.begin(), vectorA.begin() + vectorA.size() / 2, vectorA.end());
         medianA[d] = vectorA[vectorA.size() / 2];
@@ -667,8 +662,8 @@ void DifferentialExpressionPlugin::computeDE()
         // then min max - optional by toggle action
         if (_norm)
         {
-            medianA[d] = (medianA[d] - minValues[d]) * rescaleValues[d];
-            medianB[d] = (medianB[d] - minValues[d]) * rescaleValues[d];
+            medianA[d] = (medianA[d] - _minValues[d]) * _rescaleValues[d];
+            medianB[d] = (medianB[d] - _minValues[d]) * _rescaleValues[d];
         }
     }
 
