@@ -417,7 +417,7 @@ void DifferentialExpressionPlugin::init()
         selection = _points->getSelectionIndices();
         label.setText(QString("(%1 items)").arg(selection.size()));
 
-        qDebug() << QString("ClusterDifferentialExpressionPlugin: Saved selection %1.").arg(selectionName);
+        qDebug() << QString("ClusterDifferentialExpressionPlugin: Saved selection %1 : 2% items.").arg(selectionName, selection.size());
 
         if (_selectionA.size() != 0 && _selectionB.size() != 0)
             _buttonProgressBar->showStatus(TableModel::Status::OutDated);
@@ -480,8 +480,9 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
     _dropWidget->setShowDropIndicator(!_points.isValid());
 
     // Compute normalization
-    const auto numDimensions = _points->getNumDimensions();
-    
+    const auto numDimensions    = _points->getNumDimensions();
+    const auto numPoints        = _points->getNumPoints();
+
     // check if min and max need to be recomputed or are stored
     // first check if there are dimension statistics stored in the properties and if they contain min and max values
     QVariantMap dimensionStatisticsMap = _points->getProperty("Dimension Statistics").toMap();
@@ -494,8 +495,6 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
         qDebug() << "ClusterDifferentialExpressionPlugin: Computing dimension ranges";
         _minValues.resize(numDimensions, std::numeric_limits<float>::max());
         _rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
-
-        const auto numPoints = _points->getNumPoints();
 
         std::vector<std::size_t> count(numDimensions, 0);
 
@@ -560,7 +559,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
             _rescaleValues[d] = 1.0f;
     }
 
-    qDebug() << "DifferentialExpressionPlugin: Loaded " << numDimensions << " dimensions.";
+    qDebug() << "DifferentialExpressionPlugin: Loaded " << numDimensions << " dimensions for " << numPoints << " points";
 }
 
 void DifferentialExpressionPlugin::writeToCSV() const
