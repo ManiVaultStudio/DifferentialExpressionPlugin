@@ -194,13 +194,15 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
-    _normAction(&getWidget(), "Min max normalization")
+    _normAction(&getWidget(), "Min-max normalization")
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
 
     // Align text in the center
     _currentDatasetNameLabel->setAlignment(Qt::AlignCenter);
+
+    _normAction.setToolTip("Rescale the data: (x - min) / (max - min)");
 
     { // copy to Clipboard
 
@@ -324,11 +326,11 @@ void DifferentialExpressionPlugin::init()
     }
 
     _tableItemModel->setHorizontalHeader(0, QString("ID"));
-    _tableItemModel->setHorizontalHeader(1, QString("Differential Expression"));
-    _tableItemModel->setHorizontalHeader(2, QString("Mean Selection 1\n(%1 cells)").arg(selectionA.size()));
-    _tableItemModel->setHorizontalHeader(3, QString("Mean Selection 2\n(%1 cells)").arg(selectionB.size()));
-    _tableItemModel->setHorizontalHeader(4, QString("Median Selection 1\n(%1 cells)").arg(selectionA.size()));
-    _tableItemModel->setHorizontalHeader(5, QString("Median Selection 2\n(%1 cells)").arg(selectionB.size()));
+    _tableItemModel->setHorizontalHeader(1, QString("DE"));
+    _tableItemModel->setHorizontalHeader(2, QString("Mean (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(3, QString("Mean (Sel. 2)"));
+    _tableItemModel->setHorizontalHeader(4, QString("Median (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(5, QString("Median (Sel. 2)"));
     _tableItemModel->endModelBuilding();
 
     // Apply the layout
@@ -409,7 +411,7 @@ void DifferentialExpressionPlugin::init()
 
     for (std::size_t i = 0; i < MultiTriggerAction::Size; ++i)
     {
-        _selectedCellsLabel[i].setText(QString("(%1 cells)").arg(0));
+        _selectedCellsLabel[i].setText(QString("(%1 items)").arg(0));
         _selectedCellsLabel[i].setAlignment(Qt::AlignHCenter);
     }
 
