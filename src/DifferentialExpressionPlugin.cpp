@@ -161,15 +161,15 @@ namespace local
             {
                 const size_t numRows = rows.size();
                 task.setSubtasks(numRows);
-                for (std::size_t numRow = 0; numRow < numRows; ++numRow)
+                for (std::size_t localRow = 0; localRow < numRows; ++localRow)
                 {
-                    const auto r = rows[numRow];
+                    const auto globalRow = rows[localRow];
                     for (std::size_t column = 0; column < numDimensions; ++column)
                     {
-                        const auto value = data[r][column];
-                        functionObject(r, numRow, column, value);
+                        const auto value = data[globalRow][column];
+                        functionObject(globalRow, localRow, column, value);
                     }
-                    task.subtaskFinished(numRow);
+                    task.subtaskFinished(localRow);
                 }
                 task.setFinished();
             });
