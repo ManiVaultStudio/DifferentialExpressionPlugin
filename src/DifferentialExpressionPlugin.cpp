@@ -66,47 +66,12 @@ namespace local
         }
     }
     template <typename FunctionObject>
-    void visitAllElements(Dataset<Points> points, FunctionObject functionObject, const QString& description)
+    void visitAllElements(Dataset<Points>& points, FunctionObject functionObject)
     {
-        auto& task = points->getTask();
-        task.setName(description);
-        task.setProgressDescription(description);
-        task.setProgressMode(Task::ProgressMode::Subtasks);
-        task.setRunning();
-
-        /* if (points->getSparseData().getValues().size())
-         {
-             const auto& _rowPointers = points->getSparseData().getIndexPointers();
-             const auto& _colIndices = points->getSparseData().getColIndices();
-             const auto& _values = points->getSparseData().getValues();
-
-             const auto _numCols = points->getSparseData().getNumCols();
-             const auto _numRows = points->getSparseData().getNumRows();
-
-             task.setSubtasks(_numRows);
-             for (std::size_t r = 0; r < _numRows; ++r)
-             {
-                 const size_t nzEnd = _rowPointers[r + 1];
-
-                 for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
-                 {
-                     const auto value = _values[nzIndex];
-                     const auto column = _colIndices[nzIndex];
-                     functionObject(r, column, value);
-                 }
-
-                 task.subtaskFinished(r);
-             }
-
-             task.setFinished();
-         }
-         else
-         {*/
         const auto numDimensions = points->getNumDimensions();
         const auto numRows = points->getNumPoints();
-        points->visitData([numRows, &task, numDimensions, functionObject](auto data)
+        points->visitData([numRows, numDimensions, functionObject](auto data)
             {
-                task.setSubtasks(numRows);
                 for (std::size_t r = 0; r < numRows; ++r)
                 {
                     for (std::size_t column = 0; column < numDimensions; ++column)
@@ -114,53 +79,16 @@ namespace local
                         const auto value = data[r][column];
                         functionObject(r, column, value);
                     }
-                    task.subtaskFinished(r);
                 }
-                task.setFinished();
             });
-        //}
     }
     template <typename RowRange, typename FunctionObject>
-    void visitElements(Dataset<Points> points, const RowRange& rows, FunctionObject functionObject, const QString& description)
+    void visitElements(Dataset<Points>& points, const RowRange& rows, FunctionObject functionObject)
     {
-        auto& task = points->getTask();
-        task.setName(description);
-        task.setProgressDescription(description);
-        task.setProgressMode(Task::ProgressMode::Subtasks);
-        task.setRunning();
-
-        /*if(points->getSparseData().getValues().size())
-        {
-            const auto& _rowPointers = points->getSparseData().getIndexPointers();
-            const auto& _colIndices = points->getSparseData().getColIndices();
-            const auto& _values = points->getSparseData().getValues();
-
-            auto _numCols = points->getSparseData().getNumCols();
-            const size_t numRows = rows.size();
-
-            task.setSubtasks(numRows);
-            for (std::size_t numRow = 0; numRow < numRows; ++numRow)
-            {
-                const auto r = rows[numRow];
-                const size_t nzEnd = _rowPointers[r + 1];
-                for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
-                {
-                    const auto value = _values[nzIndex];
-                    const auto column = _colIndices[nzIndex];
-                    functionObject(r, numRow, column, value);
-                }
-
-                task.subtaskFinished(r);
-            }
-            task.setFinished();
-        }
-        else
-        {*/
         const auto numDimensions = points->getNumDimensions();
-        points->visitData([&rows, &task, numDimensions, functionObject](auto data)
+        points->visitData([&rows, numDimensions, functionObject](auto data)
             {
                 const size_t numRows = rows.size();
-                task.setSubtasks(numRows);
                 for (std::size_t localRow = 0; localRow < numRows; ++localRow)
                 {
                     const auto globalRow = rows[localRow];
@@ -169,12 +97,8 @@ namespace local
                         const auto value = data[globalRow][column];
                         functionObject(globalRow, localRow, column, value);
                     }
-                    task.subtaskFinished(localRow);
                 }
-                task.setFinished();
             });
-
-        //}           
     }
 
 }
@@ -518,8 +442,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
                 if (value < _minValues[column])
                     _minValues[column] = value;
                 count[column]++;
-            }, QString("Determine value ranges"));
-
+            });
 
         // check for potential 0 values and add them to the min and max range if needed
 #pragma omp parallel for schedule(dynamic,1)
@@ -636,12 +559,12 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> mediansA(numDimensions, 0);
     std::vector<float> mediansB(numDimensions, 0);
 
-    auto computeAvgHelper = [&](const std::vector<uint32_t>& selectionIDs, std::vector<float>& means, std::vector<std::vector<float>>& valCopies, const int selectionName) -> void {
-        local::visitElements(_points, selectionIDs, [&means, &valCopies](auto rowID, auto numRowLocal, auto column, auto value)
+    auto computeAvgHelper = [this](const std::vector<uint32_t>& selectionIDs, std::vector<float>& means, std::vector<std::vector<float>>& valCopies) -> void {
+        local::visitElements(_points, selectionIDs, [&means, &valCopies](auto globalRowID, auto localRowID, auto column, auto value)
             {
                 means[column] += value;
-                valCopies[column][numRowLocal] = value; // for median
-            }, QString("Computing mean expression values for selection %1").arg(selectionName));
+                valCopies[column][localRowID] = value; // for median
+            });
         };
 
     auto computeMedian = [](std::vector<float>& vec) -> float {
@@ -655,8 +578,8 @@ void DifferentialExpressionPlugin::computeDE()
 
     // first compute the sum of values per dimension for _selectionA and _selectionB
     // and copy the respective expresion values for median computation (requires sorting)
-    computeAvgHelper(_selectionA, meansA, valuesA, 1);
-    computeAvgHelper(_selectionB, meansB, valuesB, 1);
+    computeAvgHelper(_selectionA, meansA, valuesA);
+    computeAvgHelper(_selectionB, meansB, valuesB);
 
 #pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
