@@ -588,18 +588,14 @@ void DifferentialExpressionPlugin::computeDE()
         meansA[d] /= selectionSizeA;
         meansB[d] /= selectionSizeB;
 
-        // then min max - optional by toggle action
-        if (_norm) {
-            meansA[d] = normAvg(meansA, d);
-            meansB[d] = normAvg(meansB, d);
-        }
-
         // compute median
         mediansA[d] = computeMedian(valuesA[d]);
         mediansB[d] = computeMedian(valuesB[d]);
 
         // then min max - optional by toggle action
         if (_norm) {
+            meansA[d]   = normAvg(meansA, d);
+            meansB[d]   = normAvg(meansB, d);
             mediansA[d] = normAvg(mediansA, d);
             mediansB[d] = normAvg(mediansB, d);
         }
