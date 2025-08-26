@@ -1,7 +1,5 @@
 #include "DifferentialExpressionPlugin.h"
 
-#include <event/Event.h>
-
 #include <DatasetsMimeData.h>
 
 #include <QDebug>
@@ -62,53 +60,18 @@ namespace local
         else
         {
 #ifdef _DEBUG
-            qDebug() << "Error: requested " << QMetaType::fromType<T>().name() << " but value is of type " << variant.metaType().name();
+            qDebug() << "ClusterDifferentialExpressionPlugin: Error: requested " << QMetaType::fromType<T>().name() << " but value is of type " << variant.metaType().name();
 #endif
             return T();
         }
     }
     template <typename FunctionObject>
-    void visitElements(Dataset<Points> points, FunctionObject functionObject, const QString& description)
+    void visitAllElements(Dataset<Points>& points, FunctionObject functionObject)
     {
-        auto& task = points->getTask();
-        task.setName(description);
-        task.setProgressDescription(description);
-        task.setProgressMode(Task::ProgressMode::Subtasks);
-        task.setRunning();
-
-        /* if (points->getSparseData().getValues().size())
-         {
-             const auto& _rowPointers = points->getSparseData().getIndexPointers();
-             const auto& _colIndices = points->getSparseData().getColIndices();
-             const auto& _values = points->getSparseData().getValues();
-
-             const auto _numCols = points->getSparseData().getNumCols();
-             const auto _numRows = points->getSparseData().getNumRows();
-
-             task.setSubtasks(_numRows);
-             for (std::size_t r = 0; r < _numRows; ++r)
-             {
-                 const size_t nzEnd = _rowPointers[r + 1];
-
-                 for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
-                 {
-                     const auto value = _values[nzIndex];
-                     const auto column = _colIndices[nzIndex];
-                     functionObject(r, column, value);
-                 }
-
-                 task.subtaskFinished(r);
-             }
-
-             task.setFinished();
-         }
-         else
-         {*/
         const auto numDimensions = points->getNumDimensions();
         const auto numRows = points->getNumPoints();
-        points->visitData([numRows, &task, numDimensions, functionObject](auto data)
+        points->visitData([numRows, numDimensions, functionObject](auto data)
             {
-                task.setSubtasks(numRows);
                 for (std::size_t r = 0; r < numRows; ++r)
                 {
                     for (std::size_t column = 0; column < numDimensions; ++column)
@@ -116,63 +79,26 @@ namespace local
                         const auto value = data[r][column];
                         functionObject(r, column, value);
                     }
-                    task.subtaskFinished(r);
                 }
-                task.setFinished();
             });
-        //}
     }
     template <typename RowRange, typename FunctionObject>
-    void visitElements(Dataset<Points> points, const RowRange& rows, FunctionObject functionObject, const QString& description)
+    void visitElements(Dataset<Points>& points, const RowRange& rows, FunctionObject functionObject)
     {
-        auto& task = points->getTask();
-        task.setName(description);
-        task.setProgressDescription(description);
-        task.setProgressMode(Task::ProgressMode::Subtasks);
-        task.setRunning();
-
-        /*if(points->getSparseData().getValues().size())
-        {
-            const auto& _rowPointers = points->getSparseData().getIndexPointers();
-            const auto& _colIndices = points->getSparseData().getColIndices();
-            const auto& _values = points->getSparseData().getValues();
-
-            auto _numCols = points->getSparseData().getNumCols();
-
-            task.setSubtasks(rows.size());
-            for (const auto r : rows)
-            {
-                const size_t nzEnd = _rowPointers[r + 1];
-                for (std::ptrdiff_t nzIndex = _rowPointers[r]; nzIndex < nzEnd; nzIndex++)
-                {
-                    const auto value = _values[nzIndex];
-                    const auto column = _colIndices[nzIndex];
-                    functionObject(r, column, value);
-                }
-
-                task.subtaskFinished(r);
-            }
-            task.setFinished();
-        }
-        else
-        {*/
         const auto numDimensions = points->getNumDimensions();
-        points->visitData([&rows, &task, numDimensions, functionObject](auto data)
+        points->visitData([&rows, numDimensions, functionObject](auto data)
             {
-                task.setSubtasks(rows.size());
-                for (const auto r : rows)
+                const size_t numRows = rows.size();
+                for (std::size_t localRow = 0; localRow < numRows; ++localRow)
                 {
+                    const auto globalRow = rows[localRow];
                     for (std::size_t column = 0; column < numDimensions; ++column)
                     {
-                        const auto value = data[r][column];
-                        functionObject(r, column, value);
+                        const auto value = data[globalRow][column];
+                        functionObject(globalRow, localRow, column, value);
                     }
-                    task.subtaskFinished(r);
                 }
-                task.setFinished();
             });
-
-        //}           
     }
 
 }
@@ -189,18 +115,21 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _updateStatisticsAction(this, "Calculate Differential Expression"),
     _selectionTriggerActions(this, getGuiName(), "Set Selection %1"),
     _sortFilterProxyModel(new TableSortFilterProxyModel),
+    _totalTableColumns(0),
     _tableItemModel(new TableModel(nullptr, false)),
     _tableView(nullptr),
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
-    _normAction(&getWidget(), "Min max normalization")
+    _normAction(&getWidget(), "Min-max normalization")
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
 
     // Align text in the center
     _currentDatasetNameLabel->setAlignment(Qt::AlignCenter);
+
+    _normAction.setToolTip("Rescale the data: (selection_mean - global_min) / (global_max - global_min)");
 
     { // copy to Clipboard
 
@@ -226,15 +155,10 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
             });
     }
 
-
     _sortFilterProxyModel->setSourceModel(_tableItemModel.get());
     _filterOnIdAction.setSearchMode(true);
     _filterOnIdAction.setClearable(true);
     _filterOnIdAction.setPlaceHolderString("Filter by ID");
-
-    _updateStatisticsAction.setCheckable(false);
-    _updateStatisticsAction.setChecked(false);
-
 
     connect(&_updateStatisticsAction, &TriggerAction::triggered, [this](const bool& var)
         {
@@ -328,6 +252,17 @@ void DifferentialExpressionPlugin::init()
         layout->addWidget(_buttonProgressBar);
     }
 
+    _totalTableColumns = 6;
+
+    _tableItemModel->startModelBuilding(_totalTableColumns, 0);
+    _tableItemModel->setHorizontalHeader(0, QString("ID"));
+    _tableItemModel->setHorizontalHeader(1, QString("DE"));
+    _tableItemModel->setHorizontalHeader(2, QString("Mean (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(3, QString("Mean (Sel. 2)"));
+    _tableItemModel->setHorizontalHeader(4, QString("Median (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(5, QString("Median (Sel. 2)"));
+    _tableItemModel->endModelBuilding();
+
     // Apply the layout
     getWidget().setLayout(layout);
 
@@ -360,7 +295,7 @@ void DifferentialExpressionPlugin::init()
         // Visually indicate if the dataset is of the wrong data type and thus cannot be dropped
         if (!dataTypes.contains(dataType)) {
             dropRegions << new DropWidget::DropRegion(this, "Incompatible data", "This type of data is not supported", "exclamation-circle", false);
-            qDebug() << "Incompatible data" << ": " << "This type of data is not supported";
+            qDebug() << "ClusterDifferentialExpressionPlugin: Incompatible data: This type of data is not supported";
         }
         else
         {
@@ -375,7 +310,7 @@ void DifferentialExpressionPlugin::init()
 
                     // Dataset cannot be dropped because it is already loaded
                     dropRegions << new DropWidget::DropRegion(this, "Warning", "Data already loaded", "exclamation-circle", false);
-                    qDebug() << "Warning" << ": " << "Data already loaded";
+                    qDebug() << "ClusterDifferentialExpressionPlugin: Warning: Data already loaded";
                 }
                 else {
 
@@ -404,149 +339,51 @@ void DifferentialExpressionPlugin::init()
         _dropWidget->setShowDropIndicator(newDatasetName.isEmpty());
         });
 
-    //_setFirstSelectionButton = new QPushButton("0 cells");
-    //_setSecondSelectionButton = new QPushButton("0 cells");
-    //_computeDiffExprButton = new QPushButton("Compute diff expression");
-
-    for (std::size_t i = 0; i < MultiTriggerAction::Size; ++i)
+    for (std::size_t i = 0; i < _selectedCellsLabel.size(); ++i)
     {
-        _selectedCellsLabel[i].setText(QString("(%1 cells)").arg(0));
+        _selectedCellsLabel[i].setText(QString("(%1 items)").arg(0));
         _selectedCellsLabel[i].setAlignment(Qt::AlignHCenter);
     }
 
+    auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, const QString& selectionName, QLabel& label) {
+        selection = _points->getSelectionIndices();
 
-    connect(_selectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this]()
+        std::sort(selection.begin(), selection.end());
+        const auto last = std::unique(selection.begin(), selection.end());
+        selection.erase(last, selection.end());
+
+        label.setText(QString("(%1 items)").arg(selection.size()));
+
+        qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection " << selectionName << " with " << selection.size() << " items.";
+
+        if (_selectionA.size() != 0 && _selectionB.size() != 0)
+            _buttonProgressBar->showStatus(TableModel::Status::OutDated);
+
+        };
+
+    connect(_selectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices]()
         {
             if (!_points.isValid())
                 return;
 
-            auto selectionDataset = _points->getSelection();
-            std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
-
-            selectionA = selectionIndices;
-
-            qDebug() << "Saved selection A.";
-            _selectedCellsLabel[0].setText(QString("(%1 cells)").arg(selectionA.size()));
-            if (selectionA.size() != 0 && selectionB.size() != 0)
-                _buttonProgressBar->showStatus(TableModel::Status::OutDated);
+            updateSelectionIndices(_selectionA, "A", _selectedCellsLabel[0]);
         });
 
-    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this]()
+    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, updateSelectionIndices]()
         {
             if (!_points.isValid())
                 return;
-            auto selectionDataset = _points->getSelection();
-            std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
-            _selectedCellsLabel[1].setText(QString("(%1 cells)").arg(selectionB.size()));
-            selectionB = selectionIndices;
 
-            qDebug() << "Saved selection B.";
-            if (selectionA.size() != 0 && selectionB.size() != 0)
-                _buttonProgressBar->showStatus(TableModel::Status::OutDated);
-        });
-
-    connect(&_updateStatisticsAction, &TriggerAction::triggered, [this](const bool&)
-        {
-            if (!_points.isValid())
-                return;
-            _tableItemModel->invalidate();
-            auto selectionDataset = _points->getSelection();
-            std::vector<uint32_t> selectionIndices = selectionDataset->getSelectionIndices();
-
-            // Compute differential expr
-            qDebug() << "Computing differential expression.";
-
-            std::ptrdiff_t numDimensions = _points->getNumDimensions();
-            std::vector<float> meanA(numDimensions, 0);
-            std::vector<float> meanB(numDimensions, 0);
-
-            // for median, collect per dimension values TODO: maybe look for median dynamically, instead of store the vectors
-            std::vector<std::vector<float>> valuesA(numDimensions);
-            std::vector<std::vector<float>> valuesB(numDimensions);
-            std::vector<float> medianA(numDimensions, 0);
-            std::vector<float> medianB(numDimensions, 0);
-
-            // first compute the sum of values per dimension for selectionA and selectionB
-            local::visitElements(_points, selectionA, [&meanA, &valuesA](auto row, auto column, auto value)
-                {
-                    meanA[column] += value;
-                    valuesA[column].push_back(value);// for median
-                }, QString("Computing mean expression values for Selection 1"));
-
-            local::visitElements(_points, selectionB, [&meanB, &valuesB](auto row, auto column, auto value)
-                {
-                    meanB[column] += value;
-                    valuesB[column].push_back(value); // for median
-                }, QString("Computing mean expression values for Selection 2"));
-
-
-#pragma omp parallel for schedule(dynamic,1)
-            for (std::ptrdiff_t d = 0; d < numDimensions; d++)
-            {
-                // first divide means by number of rows
-                meanA[d] /= selectionA.size();
-                meanB[d] /= selectionB.size();
-
-                // then min max - optional by toggle action
-                if (_norm)
-                {
-                    meanA[d] = (meanA[d] - minValues[d]) * rescaleValues[d];
-                    meanB[d] = (meanB[d] - minValues[d]) * rescaleValues[d];
-                }
-
-                // compute median
-                auto& vectorA = valuesA[d];
-                auto& vectorB = valuesB[d];
-
-                std::nth_element(vectorA.begin(), vectorA.begin() + vectorA.size() / 2, vectorA.end());
-                medianA[d] = vectorA[vectorA.size() / 2];
-
-                std::nth_element(vectorB.begin(), vectorB.begin() + vectorB.size() / 2, vectorB.end());
-                medianB[d] = vectorB[vectorB.size() / 2];
-
-                // then min max - optional by toggle action
-                if (_norm)
-                {
-                    medianA[d] = (medianA[d] - minValues[d]) * rescaleValues[d];
-                    medianB[d] = (medianB[d] - minValues[d]) * rescaleValues[d];
-                }
-            }
-            //int totalColumnCount = 4;
-            int totalColumnCount = 6; // with two median columns
-            _tableItemModel->startModelBuilding(totalColumnCount, numDimensions);
-#pragma omp  parallel for schedule(dynamic,1)
-            for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
-            {
-                std::vector<QVariant> dataVector(totalColumnCount);
-                dataVector[0] = _geneList[dimension];
-
-                dataVector[1] = local::fround(meanA[dimension] - meanB[dimension], 3);
-                dataVector[2] = local::fround(meanA[dimension], 3);
-                dataVector[3] = local::fround(meanB[dimension], 3);
-                dataVector[4] = local::fround(medianA[dimension], 3);
-                dataVector[5] = local::fround(medianB[dimension], 3);
-                _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
-            }
-            _tableItemModel->setHorizontalHeader(0, QString("ID"));
-            _tableItemModel->setHorizontalHeader(1, QString("Differential Expression"));
-            _tableItemModel->setHorizontalHeader(2, QString("Mean Selection 1\n(%1 cells)").arg(selectionA.size()));
-            _tableItemModel->setHorizontalHeader(3, QString("Mean Selection 2\n(%1 cells)").arg(selectionB.size()));
-            _tableItemModel->setHorizontalHeader(4, QString("Median Selection 1\n(%1 cells)").arg(selectionA.size()));
-            _tableItemModel->setHorizontalHeader(5, QString("Median Selection 2\n(%1 cells)").arg(selectionB.size()));
-            _tableItemModel->endModelBuilding();
-
+            updateSelectionIndices(_selectionB, "B", _selectedCellsLabel[1]);
         });
 
     QGridLayout* selectionLayout = new QGridLayout();
-    for (std::size_t i = 0; i < MultiTriggerAction::Size; ++i)
+    for (std::size_t i = 0; i < _selectedCellsLabel.size(); ++i)
     {
         selectionLayout->addWidget(_selectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 0, i);
         selectionLayout->addWidget(&_selectedCellsLabel[i], 1, i);
         layout->addLayout(selectionLayout);
     }
-
-
-    // layout->addWidget(_computeDiffExprButton);
 
      // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);
@@ -564,7 +401,7 @@ void DifferentialExpressionPlugin::setPositionDataset(const mv::Dataset<Points>&
 
     _points = newPoints;
 
-    auto newDatasetName = _points->getGuiName();
+    const auto newDatasetName = _points->getGuiName();
 
     // Update the current dataset name label
     _currentDatasetNameLabel->setText(QString("Current points dataset: %1").arg(newDatasetName));
@@ -579,17 +416,9 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
     // Do not show the drop indicator if there is a valid point positions dataset
     _dropWidget->setShowDropIndicator(!_points.isValid());
 
-    // Get gene list
-    _geneList.clear();
-    std::vector<QString> geneNames = _points->getDimensionNames();
-    for (int i = 0; i < geneNames.size(); i++)
-    {
-        _geneList.append(geneNames[i]);
-    }
-    qDebug() << "Loaded " << _geneList.size() << " genes.";
-
     // Compute normalization
-    auto numDimensions = _points->getNumDimensions();
+    const auto numDimensions    = _points->getNumDimensions();
+    const auto numPoints        = _points->getNumPoints();
 
     // check if min and max need to be recomputed or are stored
     // first check if there are dimension statistics stored in the properties and if they contain min and max values
@@ -600,23 +429,20 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
     if (recompute)
     {
-        qDebug() << "Computing dimension ranges";
-        minValues.resize(numDimensions, std::numeric_limits<float>::max());
-        rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
-
-        auto numPoints = _points->getNumPoints();
+        qDebug() << "ClusterDifferentialExpressionPlugin: Computing dimension ranges";
+        _minValues.resize(numDimensions, std::numeric_limits<float>::max());
+        _rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
 
         std::vector<std::size_t> count(numDimensions, 0);
 
-        local::visitElements(_points, [this, &count](auto row, auto column, auto value)->void
+        local::visitAllElements(_points, [this, &count](auto row, auto column, auto value)->void
             {
-                if (value > rescaleValues[column])
-                    rescaleValues[column] = value;
-                if (value < minValues[column])
-                    minValues[column] = value;
+                if (value > _rescaleValues[column])
+                    _rescaleValues[column] = value;
+                if (value < _minValues[column])
+                    _minValues[column] = value;
                 count[column]++;
-            }, QString("Determine value ranges"));
-
+            });
 
         // check for potential 0 values and add them to the min and max range if needed
 #pragma omp parallel for schedule(dynamic,1)
@@ -624,16 +450,16 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
         {
             if (count[d] < numPoints)
             {
-                if (minValues[d] > 0)
-                    minValues[d] = 0;
-                if (rescaleValues[d] < 0)
-                    minValues[d] = 0;
+                if (_minValues[d] > 0)
+                    _minValues[d] = 0;
+                if (_rescaleValues[d] < 0)
+                    _minValues[d] = 0;
             }
         }
 
         // store min and max values in the properties
-        dimensionStatisticsMap["min"] = QVariantList(minValues.cbegin(), minValues.cend());
-        dimensionStatisticsMap["max"] = QVariantList(rescaleValues.cbegin(), rescaleValues.cend());
+        dimensionStatisticsMap["min"] = QVariantList(_minValues.cbegin(), _minValues.cend());
+        dimensionStatisticsMap["max"] = QVariantList(_rescaleValues.cbegin(), _rescaleValues.cend());
         _points->setProperty("Dimension Statistics", dimensionStatisticsMap);
     }
     else
@@ -644,15 +470,15 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
         recompute |= (maxList.size() != numDimensions);
         if (!recompute)
         {
-            qDebug() << "Loading dimension ranges";
+            qDebug() << "ClusterDifferentialExpressionPlugin: Loading dimension ranges";
             // load them from properties
-            minValues.resize(numDimensions);
-            rescaleValues.resize(numDimensions);
+            _minValues.resize(numDimensions);
+            _rescaleValues.resize(numDimensions);
 #pragma  omp parallel for
             for (std::ptrdiff_t i = 0; i < numDimensions; ++i)
             {
-                minValues[i]        = minList[i].toFloat();
-                rescaleValues[i]    = maxList[i].toFloat();
+                _minValues[i]        = minList[i].toFloat();
+                _rescaleValues[i]    = maxList[i].toFloat();
             }
 
         }
@@ -662,15 +488,160 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 #pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
     {
-        float diff = (rescaleValues[d] - minValues[d]);
-        if (diff != 0)
-            rescaleValues[d] = 1.0f / (rescaleValues[d] - minValues[d]);
+        const float diff = (_rescaleValues[d] - _minValues[d]);
+        if (std::fabs(diff) > 1e-6f)
+            _rescaleValues[d] = 1.0f / diff;
         else
-            rescaleValues[d] = 1.0f;
+            _rescaleValues[d] = 1.0f;
     }
 
+    qDebug() << "DifferentialExpressionPlugin: Loaded " << numDimensions << " dimensions for " << numPoints << " points";
 }
 
+void DifferentialExpressionPlugin::writeToCSV() const
+{
+    if (_tableItemModel.isNull())
+        return;
+
+    // Let the user chose the save path
+    QSettings settings(QLatin1String{ "ManiVault" }, QLatin1String{ "Plugins/" } + getKind());
+    const QLatin1String directoryPathKey("directoryPath");
+    const auto directoryPath = settings.value(directoryPathKey).toString() + "/";
+
+    QString fileName = QFileDialog::getSaveFileName(
+        nullptr, tr("Save data set"), directoryPath + "DifferentialExpression.csv", tr("CSV file (*.csv);;All Files (*)"));
+
+    // Only continue when the dialog has not been not canceled and the file name is non-empty.
+    if (fileName.isNull() || fileName.isEmpty())
+    {
+        qDebug() << "ClusterDifferentialExpressionPlugin: No data written to disk - File name empty";
+        return;
+    }
+    else
+    {
+        // store the directory name
+        settings.setValue(directoryPathKey, QFileInfo(fileName).absolutePath());
+    }
+
+    QString csvString = _tableItemModel->createCSVString(',');
+    if (csvString.isEmpty())
+        return;
+    QFile file(fileName);
+    if (!file.open(QFile::WriteOnly | QFile::Truncate))
+        return;
+    QTextStream output(&file);
+    output << csvString;
+    file.close();
+}
+
+void DifferentialExpressionPlugin::computeDE()
+{
+    if (!_points.isValid())
+        return;
+
+    _tableItemModel->invalidate();
+
+    // Compute differential expr
+    qDebug() << "ClusterDifferentialExpressionPlugin: Computing differential expression.";
+
+    const std::ptrdiff_t numDimensions = _points->getNumDimensions();
+    const size_t selectionSizeA = _selectionA.size();
+    const size_t selectionSizeB = _selectionB.size();
+
+    // for mean, sum all values and divide by size later
+    std::vector<float> meansA(numDimensions, 0);
+    std::vector<float> meansB(numDimensions, 0);
+
+    // for median, collect per dimension values and sprt later
+    // TODO: maybe look for median dynamically, instead of store the vectors
+    std::vector<std::vector<float>> valuesA(numDimensions, std::vector<float>(selectionSizeA, 0));
+    std::vector<std::vector<float>> valuesB(numDimensions, std::vector<float>(selectionSizeB, 0));
+    std::vector<float> mediansA(numDimensions, 0);
+    std::vector<float> mediansB(numDimensions, 0);
+
+    auto computeAvgHelper = [this](const std::vector<uint32_t>& selectionIDs, std::vector<float>& means, std::vector<std::vector<float>>& valCopies) -> void {
+        local::visitElements(_points, selectionIDs, [&means, &valCopies](auto globalRowID, auto localRowID, auto column, auto value)
+            {
+                means[column] += value;
+                valCopies[column][localRowID] = value; // for median
+            });
+        };
+
+    auto computeMedian = [](std::vector<float>& vec) -> float {
+        std::nth_element(vec.begin(), vec.begin() + vec.size() / 2, vec.end());
+        return vec[vec.size() / 2];
+        };
+
+    auto normAvg = [&](const std::vector<float>& avgs, const std::ptrdiff_t dim) -> float {
+        return (avgs[dim] - _minValues[dim]) * _rescaleValues[dim];
+        };
+
+    // first compute the sum of values per dimension for _selectionA and _selectionB
+    // and copy the respective expresion values for median computation (requires sorting)
+    computeAvgHelper(_selectionA, meansA, valuesA);
+    computeAvgHelper(_selectionB, meansB, valuesB);
+
+#pragma omp parallel for schedule(dynamic,1)
+    for (std::ptrdiff_t d = 0; d < numDimensions; d++)
+    {
+        // first divide means by number of rows
+        meansA[d] /= selectionSizeA;
+        meansB[d] /= selectionSizeB;
+
+        // compute median
+        mediansA[d] = computeMedian(valuesA[d]);
+        mediansB[d] = computeMedian(valuesB[d]);
+
+        // then min max - optional by toggle action
+        if (_norm) {
+            meansA[d]   = normAvg(meansA, d);
+            meansB[d]   = normAvg(meansB, d);
+            mediansA[d] = normAvg(mediansA, d);
+            mediansB[d] = normAvg(mediansB, d);
+        }
+    }
+
+    const auto& dimensionNames = _points->getDimensionNames();
+
+    _tableItemModel->startModelBuilding(_totalTableColumns, numDimensions);
+#pragma omp  parallel for schedule(dynamic,1)
+    for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
+    {
+        std::vector<QVariant> dataVector = {
+            dimensionNames[dimension],
+            local::fround(meansA[dimension] - meansB[dimension], 3),
+            local::fround(meansA[dimension], 3),
+            local::fround(meansB[dimension], 3),
+            local::fround(mediansA[dimension], 3),
+            local::fround(mediansB[dimension], 3),
+        };
+
+        assert(dataVector.size() == _totalTableColumns);
+
+        _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
+    }
+    _tableItemModel->endModelBuilding();
+}
+
+void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
+{
+    if (_tableItemModel->status() != TableModel::Status::UpToDate)
+        return;
+    try
+    {
+        const QModelIndex firstColumn = index.sibling(index.row(), 0);
+        _selectedIdAction.setString(firstColumn.data().toString());
+    }
+    catch (...) // catch everything
+    {
+        qDebug() << "DifferentialExpressionPlugin::tableView_clicked -> something went wrong :(";
+    }
+}
+
+void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection& selected, const QItemSelection& deselected)
+{
+    tableView_clicked(selected.indexes().first());
+}
 
 /******************************************************************************
  * Serialization
@@ -727,71 +698,6 @@ QVariantMap DifferentialExpressionPlugin::toVariantMap() const
 
 
     return variantMap;
-}
-
-void DifferentialExpressionPlugin::writeToCSV() const
-{
-    if (_tableItemModel.isNull())
-        return;
-    // Let the user chose the save path
-    QSettings settings(QLatin1String{ "ManiVault" }, QLatin1String{ "Plugins/" } + getKind());
-    const QLatin1String directoryPathKey("directoryPath");
-    const auto directoryPath = settings.value(directoryPathKey).toString() + "/";
-
-    QString fileName = QFileDialog::getSaveFileName(
-        nullptr, tr("Save data set"), directoryPath + "DifferentialExpression.csv", tr("CSV file (*.csv);;All Files (*)"));
-
-    // Only continue when the dialog has not been not canceled and the file name is non-empty.
-    if (fileName.isNull() || fileName.isEmpty())
-    {
-        //    qDebug() << "ClusterDifferentialExpressionPlugin: No data written to disk - File name empty";
-        return;
-    }
-    else
-    {
-        // store the directory name
-        settings.setValue(directoryPathKey, QFileInfo(fileName).absolutePath());
-    }
-
-    QString csvString = _tableItemModel->createCSVString(',');
-    if (csvString.isEmpty())
-        return;
-    QFile file(fileName);
-    if (!file.open(QFile::WriteOnly | QFile::Truncate))
-        return;
-    QTextStream output(&file);
-    output << csvString;
-    file.close();
-}
-
-
-void DifferentialExpressionPlugin::computeDE()
-{
-    // TODO:
-}
-
-void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
-{
-    if (_tableItemModel->status() != TableModel::Status::UpToDate)
-        return;
-    try
-    {
-        QModelIndex firstColumn = index.sibling(index.row(), 0);
-
-        QString selectedGeneName = firstColumn.data().toString();
-        QModelIndex temp = _sortFilterProxyModel->mapToSource(firstColumn);
-        auto row = temp.row();
-        _selectedIdAction.setString(selectedGeneName);
-    }
-    catch (...)
-    {
-        // catch everything
-    }
-}
-
-void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection& selected, const QItemSelection& deselected)
-{
-    tableView_clicked(selected.indexes().first());
 }
 
 // =============================================================================
