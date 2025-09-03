@@ -108,7 +108,6 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _loadedDatasetsAction(this, "Current dataset"),
     _dropWidget(nullptr),
     _points(),
-    _currentDatasetName(),
     _currentDatasetNameLabel(new QLabel()),
     _filterOnIdAction(this, "Filter on Id"),
     _selectedIdAction(this, "Last selected Id"),
@@ -121,7 +120,8 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
-    _normAction(&getWidget(), "Min-max normalization")
+    _normAction(&getWidget(), "Min-max normalization"),
+    _currentSelectedDimension(this, "Selected dimension")
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
@@ -186,6 +186,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _serializedActions.append(&_saveToCsvAction);
     _serializedActions.append(&_updateStatisticsAction);
     _serializedActions.append(&_selectionTriggerActions);
+    _serializedActions.append(&_currentSelectedDimension);
 
 }
 
@@ -387,7 +388,6 @@ void DifferentialExpressionPlugin::init()
 
      // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);
-
 }
 
 
@@ -401,14 +401,12 @@ void DifferentialExpressionPlugin::setPositionDataset(const mv::Dataset<Points>&
 
     _points = newPoints;
 
-    const auto newDatasetName = _points->getGuiName();
-
-    // Update the current dataset name label
-    _currentDatasetNameLabel->setText(QString("Current points dataset: %1").arg(newDatasetName));
+    // Update the current dataset name label and dimension picker
+    _currentDatasetNameLabel->setText(QString("Current points dataset: %1").arg(_points->getGuiName()));
+    _currentSelectedDimension.setPointsDataset(_points);
 
     // Only show the drop indicator when nothing is loaded in the dataset reference
-    _dropWidget->setShowDropIndicator(newDatasetName.isEmpty());
-
+    _dropWidget->setShowDropIndicator(false);
 }
 
 void DifferentialExpressionPlugin::positionDatasetChanged()
@@ -627,10 +625,14 @@ void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
 {
     if (_tableItemModel->status() != TableModel::Status::UpToDate)
         return;
+
     try
     {
         const QModelIndex firstColumn = index.sibling(index.row(), 0);
-        _selectedIdAction.setString(firstColumn.data().toString());
+        const QString dimensionName = firstColumn.data().toString();
+
+        _selectedIdAction.setString(dimensionName);
+        _currentSelectedDimension.setCurrentDimensionName(dimensionName);
     }
     catch (...) // catch everything
     {
