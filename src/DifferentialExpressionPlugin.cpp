@@ -18,6 +18,7 @@
 #include <string>
 #include <limits>
 #include <algorithm>
+#include <set>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
@@ -121,8 +122,10 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
+    _openAdditionalSettingsAction(&getWidget(), "Open additional settings"),
     _normAction(&getWidget(), "Min-max normalization"),
-    _currentSelectedDimension(this, "Selected dimension")
+    _currentSelectedDimension(this, "Selected dimension"),
+    _additionalSettingsDialog()
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
@@ -132,7 +135,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
 
     _normAction.setToolTip("Rescale the data: (selection_mean - global_min) / (global_max - global_min)");
 
-    { // copy to Clipboard
+    { // save to CSV
 
         //addTitleBarMenuAction(&_saveToCsvAction);
         _saveToCsvAction.setIcon(mv::util::StyledIcon("file-csv"));
@@ -140,7 +143,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
         _saveToCsvAction.setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
         connect(&_saveToCsvAction, &TriggerAction::triggered, this, [this]() -> void {
-            this->writeToCSV();
+            writeToCSV();
             });
     }
 
@@ -152,7 +155,17 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
         _copyToClipboardAction.setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
         connect(&_copyToClipboardAction, &TriggerAction::triggered, this, [this]() -> void {
-            this->_tableItemModel->copyToClipboard();
+            _tableItemModel->copyToClipboard();
+            });
+    }
+
+    { // additional settings dialog
+
+        _openAdditionalSettingsAction.setIcon(mv::util::StyledIcon("gears"));
+
+        connect(&_openAdditionalSettingsAction, &TriggerAction::triggered, this, [this]() -> void {
+            _additionalSettingsDialog.setCurrentData(_points);
+            _additionalSettingsDialog.populateAndOpenDialog();
             });
     }
 
@@ -189,6 +202,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _serializedActions.append(&_setSelectionTriggerActions);
     _serializedActions.append(&_highlightSelectionTriggerActions);
     _serializedActions.append(&_currentSelectedDimension);
+    _serializedActions.append(&_openAdditionalSettingsAction);
 
 }
 
@@ -241,6 +255,7 @@ void DifferentialExpressionPlugin::init()
 
         _tableView->addAction(&_saveToCsvAction);
         _tableView->addAction(&_copyToClipboardAction);
+        _tableView->addAction(&_openAdditionalSettingsAction);
     }
 
     {// Progress bar and update button
@@ -367,12 +382,48 @@ void DifferentialExpressionPlugin::init()
 
         };
 
-    auto highlightSelectionIndices = [this](std::vector<uint32_t>& selection) {
+    auto highlightSelectionIndices = [this](const std::vector<uint32_t>& selection) {
         if (!_points.isValid())
             return;
 
-        _points->setSelectionIndices(selection);
-        events().notifyDatasetDataSelectionChanged(_points);
+        auto otherData = _additionalSettingsDialog.getSelectionMappingSourcePicker().getCurrentDataset<Points>();
+
+        if (otherData.isValid()) {
+
+            const auto [selectionMapping, numPointsTarget] = getSelectionMappingOtherToCurrent(otherData, _points);
+            std::vector<uint32_t> selectionOther = {};
+
+            if (selectionMapping != nullptr &&
+                numPointsTarget == _points->getNumPoints() &&
+                checkSurjectiveMapping(selectionMapping, numPointsTarget)) 
+            {
+                std::set<uint32_t> currentSelectionIDs(selection.cbegin(), selection.cend());
+                std::set<uint32_t> otherSelectionIDs = {};
+
+                // Map values like selection (in reverse, use first value that occurs)
+                const mv::SelectionMap::Map& mapOtherToCurrent = selectionMapping->getMapping().getMap();
+
+                for (const auto& [otherID, vecOfCurrentIDs] : mapOtherToCurrent) {
+                    for (const auto currentMappedID : vecOfCurrentIDs) {
+                        if (currentSelectionIDs.contains(currentMappedID)) {
+                            otherSelectionIDs.insert(otherID);
+                            break;
+                        }
+                    }
+                }
+
+                selectionOther.assign(otherSelectionIDs.begin(), otherSelectionIDs.end());
+            }
+
+            otherData->setSelectionIndices(selectionOther);
+            events().notifyDatasetDataSelectionChanged(otherData);
+
+        }
+        else {
+            _points->setSelectionIndices(selection);
+            events().notifyDatasetDataSelectionChanged(_points);
+        }
+
         };
 
     connect(_setSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices](){
@@ -675,6 +726,8 @@ void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
 
     }
 
+    _additionalSettingsDialog.fromParentVariantMap(variantMap);
+
     QVariantMap propertiesMap = local::get_strict_value<QVariantMap>(variantMap.value("#Properties"));
     if (!propertiesMap.isEmpty())
     {
@@ -705,6 +758,8 @@ QVariantMap DifferentialExpressionPlugin::toVariantMap() const
         assert(action->getSerializationName() != "#Properties");
         action->insertIntoVariantMap(variantMap);
     }
+
+    _additionalSettingsDialog.insertIntoVariantMap(variantMap);
 
     // properties map
     QVariantMap propertiesMap;

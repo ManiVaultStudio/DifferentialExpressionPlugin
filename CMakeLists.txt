@@ -52,6 +52,8 @@ set(WIDGETS
 set(UTIL
     src/ProgressManager.h
     src/ProgressManager.cpp
+    src/AdditionalSettings.h
+    src/AdditionalSettings.cpp
 )
 
 set(ACTIONS

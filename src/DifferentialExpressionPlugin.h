@@ -6,6 +6,7 @@
 #include <PointData/PointData.h>
 #include <widgets/DropWidget.h>
 
+#include "AdditionalSettings.h"
 #include "ButtonProgressBar.h"
 #include "LoadedDatasetsAction.h"
 #include "MultiTriggerAction.h"
@@ -87,7 +88,9 @@ protected:
     StringAction                            _selectedIdAction;
     TriggerAction                           _copyToClipboardAction;
     TriggerAction                           _saveToCsvAction;
+    TriggerAction                           _openAdditionalSettingsAction;
     DimensionPickerAction                   _currentSelectedDimension;
+    AdditionalSettingsDialog                _additionalSettingsDialog;
 
     QLabelArray2                            _selectedCellsLabel;
     int                                     _totalTableColumns;
