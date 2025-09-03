@@ -112,7 +112,8 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _filterOnIdAction(this, "Filter on Id"),
     _selectedIdAction(this, "Last selected Id"),
     _updateStatisticsAction(this, "Calculate Differential Expression"),
-    _selectionTriggerActions(this, getGuiName(), "Set Selection %1"),
+    _setSelectionTriggerActions(this, getGuiName(), "Set selection %1"),
+    _highlightSelectionTriggerActions(this, getGuiName(), "Highlight selection %1"),
     _sortFilterProxyModel(new TableSortFilterProxyModel),
     _totalTableColumns(0),
     _tableItemModel(new TableModel(nullptr, false)),
@@ -185,7 +186,8 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _serializedActions.append(&_copyToClipboardAction);
     _serializedActions.append(&_saveToCsvAction);
     _serializedActions.append(&_updateStatisticsAction);
-    _serializedActions.append(&_selectionTriggerActions);
+    _serializedActions.append(&_setSelectionTriggerActions);
+    _serializedActions.append(&_highlightSelectionTriggerActions);
     _serializedActions.append(&_currentSelectedDimension);
 
 }
@@ -347,6 +349,9 @@ void DifferentialExpressionPlugin::init()
     }
 
     auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, const QString& selectionName, QLabel& label) {
+        if (!_points.isValid())
+            return;
+
         selection = _points->getSelectionIndices();
 
         std::sort(selection.begin(), selection.end());
@@ -362,29 +367,39 @@ void DifferentialExpressionPlugin::init()
 
         };
 
-    connect(_selectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices]()
-        {
-            if (!_points.isValid())
-                return;
+    auto highlightSelectionIndices = [this](std::vector<uint32_t>& selection) {
+        if (!_points.isValid())
+            return;
 
+        _points->setSelectionIndices(selection);
+        events().notifyDatasetDataSelectionChanged(_points);
+        };
+
+    connect(_setSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices](){
             updateSelectionIndices(_selectionA, "A", _selectedCellsLabel[0]);
         });
 
-    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, updateSelectionIndices]()
-        {
-            if (!_points.isValid())
-                return;
-
+    connect(_setSelectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, updateSelectionIndices](){
             updateSelectionIndices(_selectionB, "B", _selectedCellsLabel[1]);
+        });
+
+    connect(_highlightSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, highlightSelectionIndices](){
+        highlightSelectionIndices(_selectionA);
+        });
+
+    connect(_highlightSelectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, highlightSelectionIndices](){
+            highlightSelectionIndices(_selectionB);
         });
 
     QGridLayout* selectionLayout = new QGridLayout();
     for (std::size_t i = 0; i < _selectedCellsLabel.size(); ++i)
     {
-        selectionLayout->addWidget(_selectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 0, i);
-        selectionLayout->addWidget(&_selectedCellsLabel[i], 1, i);
-        layout->addLayout(selectionLayout);
+        selectionLayout->addWidget(_setSelectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 0, i);
+        selectionLayout->addWidget(_highlightSelectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 1, i);
+        selectionLayout->addWidget(&_selectedCellsLabel[i], 2, i);
     }
+
+    layout->addLayout(selectionLayout);
 
      // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);

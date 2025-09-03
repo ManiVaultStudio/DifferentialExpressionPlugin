@@ -79,7 +79,8 @@ protected:
     mv::Dataset<Points>                     _points;                    /** Points smart pointer */
     QLabel*                                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
    
-    MultiTriggerAction                      _selectionTriggerActions;
+    MultiTriggerAction                      _setSelectionTriggerActions;
+    MultiTriggerAction                      _highlightSelectionTriggerActions;
     LoadedDatasetsAction                    _loadedDatasetsAction;
     TriggerAction                           _updateStatisticsAction;
     StringAction                            _filterOnIdAction;
