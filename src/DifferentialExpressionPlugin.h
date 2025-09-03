@@ -2,6 +2,7 @@
 
 #include <Dataset.h>
 #include <ViewPlugin.h>
+#include <PointData/DimensionPickerAction.h>
 #include <PointData/PointData.h>
 #include <widgets/DropWidget.h>
 
@@ -76,28 +77,26 @@ protected:
 
     DropWidget*                             _dropWidget;                /** Widget for drag and drop behavior */
     mv::Dataset<Points>                     _points;                    /** Points smart pointer */
-    QString                                 _currentDatasetName;        /** Name of the current dataset */
     QLabel*                                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
-
-    MultiTriggerAction                      _selectionTriggerActions;
-    QLabelArray2                            _selectedCellsLabel;
    
+    MultiTriggerAction                      _selectionTriggerActions;
     LoadedDatasetsAction                    _loadedDatasetsAction;
-
     TriggerAction                           _updateStatisticsAction;
     StringAction                            _filterOnIdAction;
     StringAction                            _selectedIdAction;
+    TriggerAction                           _copyToClipboardAction;
+    TriggerAction                           _saveToCsvAction;
+    DimensionPickerAction                   _currentSelectedDimension;
+
+    QLabelArray2                            _selectedCellsLabel;
     int                                     _totalTableColumns;
     QSharedPointer<TableModel>              _tableItemModel;
     QPointer<TableSortFilterProxyModel>     _sortFilterProxyModel;
     TableView*                              _tableView;
     QPointer<ButtonProgressBar>             _buttonProgressBar;
-    TriggerAction                           _copyToClipboardAction;
-    TriggerAction                           _saveToCsvAction;
 
     QVector<WidgetAction*>                  _serializedActions;
     QByteArray                              _headerState;
-
 
     std::vector<QTableWidgetItem*>          _geneTableItems;
     std::vector<QTableWidgetItem*>          _diffTableItems;
