@@ -84,6 +84,9 @@ bool checkSelectionMapping(const mv::Dataset<Points>& other, const mv::Dataset<P
     if (!mapping)
         return false;
 
+    if (numTargetPoints != current->getNumPoints())
+        return false;
+
     return true;
 }
 
