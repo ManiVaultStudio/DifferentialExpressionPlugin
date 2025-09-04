@@ -3,23 +3,18 @@
 #include <DatasetsMimeData.h>
 
 #include <QDebug>
-#include <QMimeData>
 #include <QFile>
-#include <QPushButton>
 #include <QFileDialog>
+#include <QMimeData>
+#include <QPushButton>
 
 #include "AdditionalSettings.h"
 #include "WordWrapHeaderView.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
 #include <limits>
-#include <algorithm>
-#include <set>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
