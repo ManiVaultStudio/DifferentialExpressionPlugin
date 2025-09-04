@@ -66,6 +66,11 @@ bool checkSelectionMapping(const mv::Dataset<Points>& other, const mv::Dataset<P
 // AdditionalSettingsDialog
 //
 
+/*  Dialog available via right-click on the widget
+    Current additional settings:
+        - Select another data set (which must have a surjective selection to the current data)
+          which will be used as the source for highlighting indices
+*/
 class AdditionalSettingsDialog : public QDialog, public mv::util::Serializable
 {
     Q_OBJECT
