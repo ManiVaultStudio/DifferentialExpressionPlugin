@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QFileDialog>
 
+#include "AdditionalSettings.h"
 #include "WordWrapHeaderView.h"
 
 #include <cassert>
@@ -369,11 +370,21 @@ void DifferentialExpressionPlugin::init()
 
         selection = _points->getSelectionIndices();
 
-        std::sort(selection.begin(), selection.end());
-        const auto last = std::unique(selection.begin(), selection.end());
-        selection.erase(last, selection.end());
+        // ensure selection is unique and sorted
+        auto sortAndUnique = [](std::vector<uint32_t>& selection) -> void {
+            std::sort(selection.begin(), selection.end());
+            const auto last = std::unique(selection.begin(), selection.end());
+            selection.erase(last, selection.end());
+            };
+
+        sortAndUnique(selection);
 
         label.setText(QString("(%1 items)").arg(selection.size()));
+
+        const auto otherData     = _additionalSettingsDialog.getSelectionMappingSourcePicker().getCurrentDataset<Points>();
+        auto& otherDataSelection = _additionalSettingsDialog.getSelection(selectionName);
+        otherDataSelection       = otherData.isValid() ? otherData->getSelection<Points>()->indices : std::vector<uint32_t>{};
+        sortAndUnique(otherDataSelection);
 
         qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection " << selectionName << " with " << selection.size() << " items.";
 
@@ -382,7 +393,7 @@ void DifferentialExpressionPlugin::init()
 
         };
 
-    auto highlightSelectionIndices = [this](const std::vector<uint32_t>& selection) {
+    auto highlightSelectionIndices = [this](const std::vector<uint32_t>& selection, const QString& selectionName) {
         if (!_points.isValid())
             return;
 
@@ -390,34 +401,16 @@ void DifferentialExpressionPlugin::init()
 
         if (otherData.isValid()) {
 
+            // Check if the selection mapping makes sense
             const auto [selectionMapping, numPointsTarget] = getSelectionMappingOtherToCurrent(otherData, _points);
-            std::vector<uint32_t> selectionOther = {};
-
-            if (selectionMapping != nullptr &&
+            const bool useOtherSelection =
+                selectionMapping != nullptr &&
                 numPointsTarget == _points->getNumPoints() &&
-                checkSurjectiveMapping(selectionMapping, numPointsTarget)) 
-            {
-                std::set<uint32_t> currentSelectionIDs(selection.cbegin(), selection.cend());
-                std::set<uint32_t> otherSelectionIDs = {};
+                checkSurjectiveMapping(selectionMapping, numPointsTarget);
 
-                // Map values like selection (in reverse, use first value that occurs)
-                const mv::SelectionMap::Map& mapOtherToCurrent = selectionMapping->getMapping().getMap();
-
-                for (const auto& [otherID, vecOfCurrentIDs] : mapOtherToCurrent) {
-                    for (const auto currentMappedID : vecOfCurrentIDs) {
-                        if (currentSelectionIDs.contains(currentMappedID)) {
-                            otherSelectionIDs.insert(otherID);
-                            break;
-                        }
-                    }
-                }
-
-                selectionOther.assign(otherSelectionIDs.begin(), otherSelectionIDs.end());
-            }
-
-            otherData->setSelectionIndices(selectionOther);
+            otherData->getSelection<Points>()->indices = useOtherSelection ? _additionalSettingsDialog.getSelection(selectionName) : std::vector<uint32_t>{};
+            
             events().notifyDatasetDataSelectionChanged(otherData);
-
         }
         else {
             _points->setSelectionIndices(selection);
@@ -435,11 +428,11 @@ void DifferentialExpressionPlugin::init()
         });
 
     connect(_highlightSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, highlightSelectionIndices](){
-        highlightSelectionIndices(_selectionA);
+        highlightSelectionIndices(_selectionA, "A");
         });
 
     connect(_highlightSelectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, highlightSelectionIndices](){
-            highlightSelectionIndices(_selectionB);
+            highlightSelectionIndices(_selectionB, "B");
         });
 
     QGridLayout* selectionLayout = new QGridLayout();

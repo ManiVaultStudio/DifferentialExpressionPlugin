@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <utility>
+#include <vector>
 
 #include <QDialog>
 
@@ -83,6 +84,16 @@ public: // Getter
 
     mv::gui::DatasetPickerAction& getSelectionMappingSourcePicker() { return _selectionMappingSourcePicker; }
 
+    std::vector<uint32_t>& getSelection(const QString& selectionName) {
+        if (selectionName == "A")
+            return _selectionA;
+
+        return _selectionB;
+    }
+
+    std::vector<uint32_t>& getSelectionA() { return _selectionA; }
+    std::vector<uint32_t>& getSelectionB() { return _selectionB; }
+
 public: // Setter
 
     void setCurrentData(const mv::Dataset<Points>& currentData) { _currentData = currentData; }
@@ -92,4 +103,7 @@ private:
     mv::gui::DatasetPickerAction    _selectionMappingSourcePicker;
 
     mv::Dataset<Points>             _currentData = {};
+
+    std::vector<uint32_t>           _selectionA = {};
+    std::vector<uint32_t>           _selectionB = {};
 };
