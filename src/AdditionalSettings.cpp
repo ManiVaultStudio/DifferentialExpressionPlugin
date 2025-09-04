@@ -1,11 +1,12 @@
 #include "AdditionalSettings.h"
 
-#include <CoreInterface.h>
+#include <actions/TriggerAction.h>
+#include <actions/WidgetAction.h>
 #include <Dataset.h>
-#include <DataType.h>
 #include <LinkedData.h>
 #include <Set.h>
 #include <PointData/PointData.h>
+#include <util/Serializable.h>
 #include <util/StyledIcon.h>
 
 #include <QDialog>
@@ -15,7 +16,6 @@
 #include <cstdint>
 #include <functional>
 #include <map>
-#include <tuple>
 #include <ranges>
 #include <utility>
 #include <vector>
