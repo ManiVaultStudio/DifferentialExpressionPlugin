@@ -158,6 +158,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     { // additional settings dialog
 
         _openAdditionalSettingsAction.setIcon(mv::util::StyledIcon("gears"));
+        _additionalSettingsDialog.setCurrentData(_points);
 
         connect(&_openAdditionalSettingsAction, &TriggerAction::triggered, this, [this]() -> void {
             _additionalSettingsDialog.setCurrentData(_points);

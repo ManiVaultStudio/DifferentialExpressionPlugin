@@ -1,6 +1,7 @@
 #pragma once
 
 #include <actions/DatasetPickerAction.h>
+#include <actions/StringAction.h>
 #include <actions/TriggerAction.h>
 #include <util/Serializable.h>
 
@@ -106,6 +107,7 @@ private:
     mv::gui::DatasetPickerAction    _selectionMappingSourcePicker;
 
     mv::Dataset<Points>             _currentData = {};
+    mv::gui::StringAction           _currentDataGUID;      // internal for serialization
 
     std::vector<uint32_t>           _selectionA = {};
     std::vector<uint32_t>           _selectionB = {};

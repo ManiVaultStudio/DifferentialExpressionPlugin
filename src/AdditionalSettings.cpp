@@ -98,7 +98,8 @@ AdditionalSettingsDialog::AdditionalSettingsDialog(const mv::Dataset<Points>& cu
     QDialog(),
     mv::util::Serializable("AdditionalSettingsDialog"),
     _okButton(this, "Ok"),
-    _selectionMappingSourcePicker(this, "Selection mapping source")
+    _selectionMappingSourcePicker(this, "Selection mapping source"),
+    _currentDataGUID(this, "currentDataGUID")
 {
     setWindowTitle("Additional DE Viewer settings");
     setWindowIcon(mv::util::StyledIcon("gears"));
@@ -126,6 +127,7 @@ void AdditionalSettingsDialog::setCurrentData(const mv::Dataset<Points>& current
         return;
 
     _currentData = currentData;
+    _currentDataGUID.setString(_currentData->getId());
 
     _selectionMappingSourcePicker.setFilterFunction([this](mv::Dataset<mv::DatasetImpl> dataset) -> bool {
         return checkSelectionMapping(dataset, _currentData);
@@ -135,9 +137,10 @@ void AdditionalSettingsDialog::setCurrentData(const mv::Dataset<Points>& current
 void AdditionalSettingsDialog::fromVariantMap(const QVariantMap& variantMap)
 {
     _okButton.fromParentVariantMap(variantMap);
+    _currentDataGUID.fromParentVariantMap(variantMap);
     _selectionMappingSourcePicker.fromParentVariantMap(variantMap);
 
-    setCurrentData(_selectionMappingSourcePicker.getCurrentDataset<Points>());
+    _currentData = mv::data().getDataset(_currentDataGUID.getString());
 }
 
 QVariantMap AdditionalSettingsDialog::toVariantMap() const
@@ -145,6 +148,7 @@ QVariantMap AdditionalSettingsDialog::toVariantMap() const
     QVariantMap variantMap;
 
     _okButton.insertIntoVariantMap(variantMap);
+    _currentDataGUID.insertIntoVariantMap(variantMap);
     _selectionMappingSourcePicker.insertIntoVariantMap(variantMap);
 
     return variantMap;
