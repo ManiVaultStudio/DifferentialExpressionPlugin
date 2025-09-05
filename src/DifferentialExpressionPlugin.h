@@ -1,25 +1,25 @@
 #pragma once
 
-#include <ViewPlugin.h>
-
-#include "LoadedDatasetsAction.h"
-
 #include <Dataset.h>
+#include <ViewPlugin.h>
+#include <PointData/DimensionPickerAction.h>
+#include <PointData/PointData.h>
 #include <widgets/DropWidget.h>
 
-#include <PointData/PointData.h>
+#include "AdditionalSettings.h"
+#include "ButtonProgressBar.h"
+#include "LoadedDatasetsAction.h"
+#include "MultiTriggerAction.h"
+#include "TableModel.h"
+#include "TableSortFilterProxyModel.h"
+#include "TableView.h"
 
-#include <QWidget>
+#include <array>
+
 #include <QTableWidget>
-#include <QStringList>
 
-/** All plugin related classes are in the ManiVault plugin namespace */
 using namespace mv::plugin;
-
-/** Drop widget used in this plugin is located in the ManiVault gui namespace */
 using namespace mv::gui;
-
-/** Dataset reference used in this plugin is located in the ManiVault util namespace */
 using namespace mv::util;
 
 class QLabel;
@@ -42,12 +42,7 @@ public:
     /** This function is called by the core after the view plugin has been created */
     void init() override;
 
-    /**
-     * Invoked when a data event occurs
-     * @param dataEvent Data event which occurred
-     */
-    void onDataEvent(mv::DatasetEvent* dataEvent);
-
+    void setPositionDataset(const mv::Dataset<Points>& newPoints);
     /** Invoked when the position points dataset changes */
     void positionDatasetChanged();
 
@@ -56,6 +51,7 @@ public: // Miscellaneous
     mv::Dataset<Points>& getPositionDataset() { return _points; }
 
 public: // Serialization
+
     /**
     * Load plugin from variant map
     * @param Variant map representation of the plugin
@@ -67,48 +63,74 @@ public: // Serialization
     * @return Variant map representation of the plugin
     */
     QVariantMap toVariantMap() const override;
+ 
+
+protected slots:
+    void writeToCSV() const;
+    void computeDE();
+    
+    void tableView_clicked(const QModelIndex& index);
+    void tableView_selectionChanged(const QItemSelection& selected, const QItemSelection& deselected);
+
 
 protected:
-    DropWidget*             _dropWidget;                /** Widget for drag and drop behavior */
-    mv::Dataset<Points>     _points;                    /** Points smart pointer */
-    QString                 _currentDatasetName;        /** Name of the current dataset */
-    QLabel*                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
+    using QLabelArray2 = std::array<QLabel, MultiTriggerAction::Size>;
 
-    QPushButton*            _setFirstSelectionButton;
-    QPushButton*            _setSecondSelectionButton;
-    QPushButton*            _computeDiffExprButton;
-    QTableWidget*           _tableWidget;
-    QStringList             _geneList;
+    DropWidget*                             _dropWidget;                /** Widget for drag and drop behavior */
+    mv::Dataset<Points>                     _points;                    /** Points smart pointer */
+    QLabel*                                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
+   
+    MultiTriggerAction                      _setSelectionTriggerActions;
+    MultiTriggerAction                      _highlightSelectionTriggerActions;
+    LoadedDatasetsAction                    _loadedDatasetsAction;
+    TriggerAction                           _updateStatisticsAction;
+    StringAction                            _filterOnIdAction;
+    StringAction                            _selectedIdAction;
+    TriggerAction                           _copyToClipboardAction;
+    TriggerAction                           _saveToCsvAction;
+    TriggerAction                           _openAdditionalSettingsAction;
+    DimensionPickerAction                   _currentSelectedDimension;
+    AdditionalSettingsDialog                _additionalSettingsDialog;
 
-    LoadedDatasetsAction    _loadedDatasetsAction;
+    QLabelArray2                            _selectedCellsLabel;
+    int                                     _totalTableColumns;
+    QSharedPointer<TableModel>              _tableItemModel;
+    QPointer<TableSortFilterProxyModel>     _sortFilterProxyModel;
+    TableView*                              _tableView;
+    QPointer<ButtonProgressBar>             _buttonProgressBar;
 
-    std::vector<QTableWidgetItem*> _geneTableItems;
-    std::vector<QTableWidgetItem*> _diffTableItems;
+    QVector<WidgetAction*>                  _serializedActions;
+    QByteArray                              _headerState;
 
-    std::vector<float> minValues;
-    std::vector<float> rescaleValues;
+    std::vector<QTableWidgetItem*>          _geneTableItems;
+    std::vector<QTableWidgetItem*>          _diffTableItems;
 
-    int selOpt = 0;
-    std::vector<uint32_t> selectionA;
-    std::vector<uint32_t> selectionB;
+    std::vector<float>                      _minValues;
+    std::vector<float>                      _rescaleValues;
+
+    std::vector<uint32_t>                   _selectionA;
+    std::vector<uint32_t>                   _selectionB;
+
+    // TEMP: toggle for normalization within the loaded dataset
+    ToggleAction                            _normAction; // min max normalization
+    bool                                    _norm = false;
 };
 
-/**
- * Example view plugin factory class
- *
- * Note: Factory does not need to be altered (merely responsible for generating new plugins when requested)
- */
+
+// =============================================================================
+// Factory
+// =============================================================================
 class DifferentialExpressionPluginFactory : public ViewPluginFactory
 {
     Q_INTERFACES(mv::plugin::ViewPluginFactory mv::plugin::PluginFactory)
     Q_OBJECT
     Q_PLUGIN_METADATA(IID   "nl.BioVault.DifferentialExpressionPlugin"
-                      FILE  "DifferentialExpressionPlugin.json")
+                      FILE  "PluginInfo.json")
 
 public:
 
     /** Default constructor */
-    DifferentialExpressionPluginFactory() {}
+    DifferentialExpressionPluginFactory();
 
     /** Destructor */
     ~DifferentialExpressionPluginFactory() override {}
