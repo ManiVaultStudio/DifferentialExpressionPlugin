@@ -94,8 +94,7 @@ bool checkSelectionMapping(const mv::Dataset<Points>& other, const mv::Dataset<P
 // AdditionalSettingsDialog
 //
 
-
-AdditionalSettingsDialog::AdditionalSettingsDialog() :
+AdditionalSettingsDialog::AdditionalSettingsDialog(const mv::Dataset<Points>& currentData) :
     QDialog(),
     mv::util::Serializable("AdditionalSettingsDialog"),
     _okButton(this, "Ok"),
@@ -105,9 +104,7 @@ AdditionalSettingsDialog::AdditionalSettingsDialog() :
     setWindowIcon(mv::util::StyledIcon("gears"));
     setModal(false);
 
-    _selectionMappingSourcePicker.setFilterFunction([this](mv::Dataset<mv::DatasetImpl> dataset) -> bool {
-        return checkSelectionMapping(dataset, _currentData);
-        });
+    setCurrentData(currentData);
 
     connect(&_okButton, &mv::gui::TriggerAction::triggered, this, &QDialog::accept);
 
@@ -123,18 +120,24 @@ AdditionalSettingsDialog::AdditionalSettingsDialog() :
     setLayout(layout);
 }
 
+void AdditionalSettingsDialog::setCurrentData(const mv::Dataset<Points>& currentData) 
+{ 
+    if (!currentData.isValid())
+        return;
+
+    _currentData = currentData;
+
+    _selectionMappingSourcePicker.setFilterFunction([this](mv::Dataset<mv::DatasetImpl> dataset) -> bool {
+        return checkSelectionMapping(dataset, _currentData);
+        });
+}
+
 void AdditionalSettingsDialog::fromVariantMap(const QVariantMap& variantMap)
 {
     _okButton.fromParentVariantMap(variantMap);
     _selectionMappingSourcePicker.fromParentVariantMap(variantMap);
 
-    _selectionMappingSourcePicker.setFilterFunction([this](mv::Dataset<mv::DatasetImpl> dataset) -> bool {
-        return checkSelectionMapping(dataset, _currentData);
-        });
-
-    const auto currentData = _selectionMappingSourcePicker.getCurrentDataset<Points>();
-    if (currentData.isValid())
-        _currentData = currentData;
+    setCurrentData(_selectionMappingSourcePicker.getCurrentDataset<Points>());
 }
 
 QVariantMap AdditionalSettingsDialog::toVariantMap() const

@@ -199,7 +199,6 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _serializedActions.append(&_highlightSelectionTriggerActions);
     _serializedActions.append(&_currentSelectedDimension);
     _serializedActions.append(&_openAdditionalSettingsAction);
-
 }
 
 void DifferentialExpressionPlugin::init()

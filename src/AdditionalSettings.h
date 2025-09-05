@@ -75,7 +75,7 @@ class AdditionalSettingsDialog : public QDialog, public mv::util::Serializable
 {
     Q_OBJECT
 public:
-    AdditionalSettingsDialog();
+    AdditionalSettingsDialog(const mv::Dataset<Points>& currentData = {});
 
 public: // Serialization
 
@@ -98,7 +98,8 @@ public: // Getter
 
 public: // Setter
 
-    void setCurrentData(const mv::Dataset<Points>& currentData) { _currentData = currentData; }
+    // sets _currentData and updates the filter function for _selectionMappingSourcePicker
+    void setCurrentData(const mv::Dataset<Points>& currentData);
 
 private:
     mv::gui::TriggerAction          _okButton;
