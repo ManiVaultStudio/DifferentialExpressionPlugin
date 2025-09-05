@@ -77,13 +77,10 @@ class AdditionalSettingsDialog : public QDialog, public mv::util::Serializable
 public:
     AdditionalSettingsDialog();
 
-    void populateAndOpenDialog();
-
 public: // Serialization
 
     void fromVariantMap(const QVariantMap& variantMap) override;
     QVariantMap toVariantMap() const override;
-
 
 public: // Getter
 

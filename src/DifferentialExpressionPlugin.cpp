@@ -161,7 +161,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
 
         connect(&_openAdditionalSettingsAction, &TriggerAction::triggered, this, [this]() -> void {
             _additionalSettingsDialog.setCurrentData(_points);
-            _additionalSettingsDialog.populateAndOpenDialog();
+            _additionalSettingsDialog.show();
             });
     }
 

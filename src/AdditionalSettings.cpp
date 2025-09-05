@@ -105,20 +105,15 @@ AdditionalSettingsDialog::AdditionalSettingsDialog() :
     setWindowIcon(mv::util::StyledIcon("gears"));
     setModal(false);
 
-    connect(&_okButton, &mv::gui::TriggerAction::triggered, this, &QDialog::accept);
-}
-
-void AdditionalSettingsDialog::populateAndOpenDialog() {
-    auto* layout = new QGridLayout(this);
-    layout->setContentsMargins(10, 10, 10, 10);
-    int row = 0;
-
     _selectionMappingSourcePicker.setFilterFunction([this](mv::Dataset<mv::DatasetImpl> dataset) -> bool {
         return checkSelectionMapping(dataset, _currentData);
         });
 
-    //const mv::Datasets dataSets = mv::data().getAllDatasets(std::vector<mv::DataType> { PointType });
-    //_selectionMappingSourcePicker.setDatasets(dataSets);
+    connect(&_okButton, &mv::gui::TriggerAction::triggered, this, &QDialog::accept);
+
+    auto* layout = new QGridLayout(this);
+    layout->setContentsMargins(10, 10, 10, 10);
+    int row = 0;
 
     layout->addWidget(_selectionMappingSourcePicker.createLabelWidget(this), ++row, 0, 1, 1);
     layout->addWidget(_selectionMappingSourcePicker.createWidget(this), row, 1, 1, -1);
@@ -126,19 +121,27 @@ void AdditionalSettingsDialog::populateAndOpenDialog() {
     layout->addWidget(_okButton.createWidget(this), ++row, 0, 1, -1, Qt::AlignRight);
 
     setLayout(layout);
-
-    show();
 }
 
 void AdditionalSettingsDialog::fromVariantMap(const QVariantMap& variantMap)
 {
+    _okButton.fromParentVariantMap(variantMap);
     _selectionMappingSourcePicker.fromParentVariantMap(variantMap);
+
+    _selectionMappingSourcePicker.setFilterFunction([this](mv::Dataset<mv::DatasetImpl> dataset) -> bool {
+        return checkSelectionMapping(dataset, _currentData);
+        });
+
+    const auto currentData = _selectionMappingSourcePicker.getCurrentDataset<Points>();
+    if (currentData.isValid())
+        _currentData = currentData;
 }
 
 QVariantMap AdditionalSettingsDialog::toVariantMap() const
 {
     QVariantMap variantMap;
 
+    _okButton.insertIntoVariantMap(variantMap);
     _selectionMappingSourcePicker.insertIntoVariantMap(variantMap);
 
     return variantMap;
