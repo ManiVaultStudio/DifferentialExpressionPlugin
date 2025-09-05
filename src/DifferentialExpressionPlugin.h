@@ -2,9 +2,11 @@
 
 #include <Dataset.h>
 #include <ViewPlugin.h>
+#include <PointData/DimensionPickerAction.h>
 #include <PointData/PointData.h>
 #include <widgets/DropWidget.h>
 
+#include "AdditionalSettings.h"
 #include "ButtonProgressBar.h"
 #include "LoadedDatasetsAction.h"
 #include "MultiTriggerAction.h"
@@ -76,28 +78,29 @@ protected:
 
     DropWidget*                             _dropWidget;                /** Widget for drag and drop behavior */
     mv::Dataset<Points>                     _points;                    /** Points smart pointer */
-    QString                                 _currentDatasetName;        /** Name of the current dataset */
     QLabel*                                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
-
-    MultiTriggerAction                      _selectionTriggerActions;
-    QLabelArray2                            _selectedCellsLabel;
    
+    MultiTriggerAction                      _setSelectionTriggerActions;
+    MultiTriggerAction                      _highlightSelectionTriggerActions;
     LoadedDatasetsAction                    _loadedDatasetsAction;
-
     TriggerAction                           _updateStatisticsAction;
     StringAction                            _filterOnIdAction;
     StringAction                            _selectedIdAction;
+    TriggerAction                           _copyToClipboardAction;
+    TriggerAction                           _saveToCsvAction;
+    TriggerAction                           _openAdditionalSettingsAction;
+    DimensionPickerAction                   _currentSelectedDimension;
+    AdditionalSettingsDialog                _additionalSettingsDialog;
+
+    QLabelArray2                            _selectedCellsLabel;
     int                                     _totalTableColumns;
     QSharedPointer<TableModel>              _tableItemModel;
     QPointer<TableSortFilterProxyModel>     _sortFilterProxyModel;
     TableView*                              _tableView;
     QPointer<ButtonProgressBar>             _buttonProgressBar;
-    TriggerAction                           _copyToClipboardAction;
-    TriggerAction                           _saveToCsvAction;
 
     QVector<WidgetAction*>                  _serializedActions;
     QByteArray                              _headerState;
-
 
     std::vector<QTableWidgetItem*>          _geneTableItems;
     std::vector<QTableWidgetItem*>          _diffTableItems;

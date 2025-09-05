@@ -3,21 +3,18 @@
 #include <DatasetsMimeData.h>
 
 #include <QDebug>
-#include <QMimeData>
 #include <QFile>
-#include <QPushButton>
 #include <QFileDialog>
+#include <QMimeData>
+#include <QPushButton>
 
+#include "AdditionalSettings.h"
 #include "WordWrapHeaderView.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
 #include <limits>
-#include <algorithm>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
@@ -108,12 +105,12 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _loadedDatasetsAction(this, "Current dataset"),
     _dropWidget(nullptr),
     _points(),
-    _currentDatasetName(),
     _currentDatasetNameLabel(new QLabel()),
     _filterOnIdAction(this, "Filter on Id"),
     _selectedIdAction(this, "Last selected Id"),
     _updateStatisticsAction(this, "Calculate Differential Expression"),
-    _selectionTriggerActions(this, getGuiName(), "Set Selection %1"),
+    _setSelectionTriggerActions(this, "Set selection triggers", "Set selection %1"),
+    _highlightSelectionTriggerActions(this, "Highlight selection triggers", "Highlight selection %1"),
     _sortFilterProxyModel(new TableSortFilterProxyModel),
     _totalTableColumns(0),
     _tableItemModel(new TableModel(nullptr, false)),
@@ -121,7 +118,10 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
-    _normAction(&getWidget(), "Min-max normalization")
+    _openAdditionalSettingsAction(&getWidget(), "Open additional settings"),
+    _normAction(&getWidget(), "Min-max normalization"),
+    _currentSelectedDimension(this, "Selected dimension"),
+    _additionalSettingsDialog()
 {
     // This line is mandatory if drag and drop behavior is required
     _currentDatasetNameLabel->setAcceptDrops(true);
@@ -131,7 +131,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
 
     _normAction.setToolTip("Rescale the data: (selection_mean - global_min) / (global_max - global_min)");
 
-    { // copy to Clipboard
+    { // save to CSV
 
         //addTitleBarMenuAction(&_saveToCsvAction);
         _saveToCsvAction.setIcon(mv::util::StyledIcon("file-csv"));
@@ -139,7 +139,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
         _saveToCsvAction.setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
         connect(&_saveToCsvAction, &TriggerAction::triggered, this, [this]() -> void {
-            this->writeToCSV();
+            writeToCSV();
             });
     }
 
@@ -151,7 +151,17 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
         _copyToClipboardAction.setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
         connect(&_copyToClipboardAction, &TriggerAction::triggered, this, [this]() -> void {
-            this->_tableItemModel->copyToClipboard();
+            _tableItemModel->copyToClipboard();
+            });
+    }
+
+    { // additional settings dialog
+
+        _openAdditionalSettingsAction.setIcon(mv::util::StyledIcon("gears"));
+
+        connect(&_openAdditionalSettingsAction, &TriggerAction::triggered, this, [this]() -> void {
+            _additionalSettingsDialog.setCurrentData(_points);
+            _additionalSettingsDialog.show();
             });
     }
 
@@ -185,8 +195,10 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _serializedActions.append(&_copyToClipboardAction);
     _serializedActions.append(&_saveToCsvAction);
     _serializedActions.append(&_updateStatisticsAction);
-    _serializedActions.append(&_selectionTriggerActions);
-
+    _serializedActions.append(&_setSelectionTriggerActions);
+    _serializedActions.append(&_highlightSelectionTriggerActions);
+    _serializedActions.append(&_currentSelectedDimension);
+    _serializedActions.append(&_openAdditionalSettingsAction);
 }
 
 void DifferentialExpressionPlugin::init()
@@ -238,6 +250,7 @@ void DifferentialExpressionPlugin::init()
 
         _tableView->addAction(&_saveToCsvAction);
         _tableView->addAction(&_copyToClipboardAction);
+        _tableView->addAction(&_openAdditionalSettingsAction);
     }
 
     {// Progress bar and update button
@@ -346,13 +359,26 @@ void DifferentialExpressionPlugin::init()
     }
 
     auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, const QString& selectionName, QLabel& label) {
+        if (!_points.isValid())
+            return;
+
         selection = _points->getSelectionIndices();
 
-        std::sort(selection.begin(), selection.end());
-        const auto last = std::unique(selection.begin(), selection.end());
-        selection.erase(last, selection.end());
+        // ensure selection is unique and sorted
+        auto sortAndUnique = [](std::vector<uint32_t>& selection) -> void {
+            std::sort(selection.begin(), selection.end());
+            const auto last = std::unique(selection.begin(), selection.end());
+            selection.erase(last, selection.end());
+            };
+
+        sortAndUnique(selection);
 
         label.setText(QString("(%1 items)").arg(selection.size()));
+
+        const auto otherData     = _additionalSettingsDialog.getSelectionMappingSourcePicker().getCurrentDataset<Points>();
+        auto& otherDataSelection = _additionalSettingsDialog.getSelection(selectionName);
+        otherDataSelection       = otherData.isValid() ? otherData->getSelection<Points>()->indices : std::vector<uint32_t>{};
+        sortAndUnique(otherDataSelection);
 
         qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection " << selectionName << " with " << selection.size() << " items.";
 
@@ -361,33 +387,60 @@ void DifferentialExpressionPlugin::init()
 
         };
 
-    connect(_selectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices]()
-        {
-            if (!_points.isValid())
-                return;
+    auto highlightSelectionIndices = [this](const std::vector<uint32_t>& selection, const QString& selectionName) {
+        if (!_points.isValid())
+            return;
 
+        auto otherData = _additionalSettingsDialog.getSelectionMappingSourcePicker().getCurrentDataset<Points>();
+
+        if (otherData.isValid()) {
+
+            // Check if the selection mapping makes sense
+            const auto [selectionMapping, numPointsTarget] = getSelectionMappingOtherToCurrent(otherData, _points);
+            const bool useOtherSelection =
+                selectionMapping != nullptr &&
+                numPointsTarget == _points->getNumPoints() &&
+                checkSurjectiveMapping(selectionMapping, numPointsTarget);
+
+            otherData->getSelection<Points>()->indices = useOtherSelection ? _additionalSettingsDialog.getSelection(selectionName) : std::vector<uint32_t>{};
+            
+            events().notifyDatasetDataSelectionChanged(otherData);
+        }
+        else {
+            _points->setSelectionIndices(selection);
+            events().notifyDatasetDataSelectionChanged(_points);
+        }
+
+        };
+
+    connect(_setSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices](){
             updateSelectionIndices(_selectionA, "A", _selectedCellsLabel[0]);
         });
 
-    connect(_selectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, updateSelectionIndices]()
-        {
-            if (!_points.isValid())
-                return;
-
+    connect(_setSelectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, updateSelectionIndices](){
             updateSelectionIndices(_selectionB, "B", _selectedCellsLabel[1]);
+        });
+
+    connect(_highlightSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, highlightSelectionIndices](){
+        highlightSelectionIndices(_selectionA, "A");
+        });
+
+    connect(_highlightSelectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, highlightSelectionIndices](){
+            highlightSelectionIndices(_selectionB, "B");
         });
 
     QGridLayout* selectionLayout = new QGridLayout();
     for (std::size_t i = 0; i < _selectedCellsLabel.size(); ++i)
     {
-        selectionLayout->addWidget(_selectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 0, i);
-        selectionLayout->addWidget(&_selectedCellsLabel[i], 1, i);
-        layout->addLayout(selectionLayout);
+        selectionLayout->addWidget(_setSelectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 0, i);
+        selectionLayout->addWidget(_highlightSelectionTriggerActions.getTriggerAction(i)->createWidget(&mainWidget), 1, i);
+        selectionLayout->addWidget(&_selectedCellsLabel[i], 2, i);
     }
+
+    layout->addLayout(selectionLayout);
 
      // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);
-
 }
 
 
@@ -401,14 +454,12 @@ void DifferentialExpressionPlugin::setPositionDataset(const mv::Dataset<Points>&
 
     _points = newPoints;
 
-    const auto newDatasetName = _points->getGuiName();
-
-    // Update the current dataset name label
-    _currentDatasetNameLabel->setText(QString("Current points dataset: %1").arg(newDatasetName));
+    // Update the current dataset name label and dimension picker
+    _currentDatasetNameLabel->setText(QString("Current points dataset: %1").arg(_points->getGuiName()));
+    _currentSelectedDimension.setPointsDataset(_points);
 
     // Only show the drop indicator when nothing is loaded in the dataset reference
-    _dropWidget->setShowDropIndicator(newDatasetName.isEmpty());
-
+    _dropWidget->setShowDropIndicator(false);
 }
 
 void DifferentialExpressionPlugin::positionDatasetChanged()
@@ -627,10 +678,14 @@ void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
 {
     if (_tableItemModel->status() != TableModel::Status::UpToDate)
         return;
+
     try
     {
         const QModelIndex firstColumn = index.sibling(index.row(), 0);
-        _selectedIdAction.setString(firstColumn.data().toString());
+        const QString dimensionName = firstColumn.data().toString();
+
+        _selectedIdAction.setString(dimensionName);
+        _currentSelectedDimension.setCurrentDimensionName(dimensionName);
     }
     catch (...) // catch everything
     {
@@ -657,6 +712,8 @@ void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
             action->fromParentVariantMap(variantMap);
 
     }
+
+    _additionalSettingsDialog.fromParentVariantMap(variantMap);
 
     QVariantMap propertiesMap = local::get_strict_value<QVariantMap>(variantMap.value("#Properties"));
     if (!propertiesMap.isEmpty())
@@ -688,6 +745,8 @@ QVariantMap DifferentialExpressionPlugin::toVariantMap() const
         assert(action->getSerializationName() != "#Properties");
         action->insertIntoVariantMap(variantMap);
     }
+
+    _additionalSettingsDialog.insertIntoVariantMap(variantMap);
 
     // properties map
     QVariantMap propertiesMap;
