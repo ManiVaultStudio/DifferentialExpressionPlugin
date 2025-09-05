@@ -97,6 +97,7 @@ bool checkSelectionMapping(const mv::Dataset<Points>& other, const mv::Dataset<P
 
 AdditionalSettingsDialog::AdditionalSettingsDialog() :
     QDialog(),
+    mv::util::Serializable("AdditionalSettingsDialog"),
     _okButton(this, "Ok"),
     _selectionMappingSourcePicker(this, "Selection mapping source")
 {
