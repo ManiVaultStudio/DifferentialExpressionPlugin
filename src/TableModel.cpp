@@ -1,25 +1,28 @@
 #include "TableModel.h"
+
 #include <QApplication>
 #include <QClipboard>
-#include <assert.h>
 #include <QMetaType>
 #include <QLabel>
-//#include <QAbstractItemModelTester>
+
+#include <cassert>
+
 //#define TESTING
 
-namespace 
+#ifdef TESTING
+#include <QAbstractItemModelTester>
+#endif
+
+namespace local
 {
-	namespace local
+    static void fixQStringForClipboard(QString& s, QChar separator)
 	{
-		void fixQStringForClipboard(QString& s, QChar separator)
-		{
-			QChar defaultReplaceChar = ' ';
-			if (separator == defaultReplaceChar)
-				defaultReplaceChar = '_';
-			s.replace('\n', defaultReplaceChar);
-			s.replace('\t', defaultReplaceChar);
-			s.replace(separator, ' ');
-		}
+		QChar defaultReplaceChar = ' ';
+		if (separator == defaultReplaceChar)
+			defaultReplaceChar = '_';
+		s.replace('\n', defaultReplaceChar);
+		s.replace('\t', defaultReplaceChar);
+		s.replace(separator, ' ');
 	}
 }
 
@@ -135,7 +138,6 @@ void TableModel::resize(std::size_t rows, std::size_t columns)
 	
 	if (rows != m_data.size())
 	{
-		
 		layoutToBeChanged = true;
 	}
 
@@ -167,7 +169,6 @@ QVariant& TableModel::at(std::size_t row, std::size_t column)
 
 void TableModel::setRow(std::size_t row, const std::vector<QVariant> &data, Qt::CheckState checked, bool silent/*=false*/)
 {
-
 	assert(data.size() == m_columns);
 	std::size_t startColumn = m_columns;
 	std::size_t endColumn = m_columns;

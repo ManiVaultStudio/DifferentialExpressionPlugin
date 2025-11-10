@@ -1,5 +1,0 @@
-<RCC>
-    <qresource prefix="/">
-        <file>gene_symbols.csv</file>
-    </qresource>
-</RCC>

@@ -1,32 +1,25 @@
 #pragma once
 
-#include <ViewPlugin.h>
-
-#include "LoadedDatasetsAction.h"
-#include "MultiTriggerAction.h"
-
-#include "actions/DecimalAction.h"
-
 #include <Dataset.h>
+#include <ViewPlugin.h>
+#include <PointData/DimensionPickerAction.h>
+#include <PointData/PointData.h>
 #include <widgets/DropWidget.h>
 
-#include <PointData/PointData.h>
-#include <ClusterData/ClusterData.h>
+#include "AdditionalSettings.h"
+#include "ButtonProgressBar.h"
+#include "LoadedDatasetsAction.h"
+#include "MultiTriggerAction.h"
+#include "TableModel.h"
+#include "TableSortFilterProxyModel.h"
+#include "TableView.h"
 
+#include <array>
 
 #include <QTableWidget>
-#include "TableSortFilterProxyModel.h"
-#include "TableModel.h"
-#include "TableView.h"
-#include "ButtonProgressBar.h"
 
-/** All plugin related classes are in the ManiVault plugin namespace */
 using namespace mv::plugin;
-
-/** Drop widget used in this plugin is located in the ManiVault gui namespace */
 using namespace mv::gui;
-
-/** Dataset reference used in this plugin is located in the ManiVault util namespace */
 using namespace mv::util;
 
 class QLabel;
@@ -49,14 +42,7 @@ public:
     /** This function is called by the core after the view plugin has been created */
     void init() override;
 
-    /**
-     * Invoked when a data event occurs
-     * @param dataEvent Data event which occurred
-     */
-    void onDataEvent(mv::DatasetEvent* dataEvent);
-
-
-    void setPositionDataset(mv::Dataset<Points> newPoints);
+    void setPositionDataset(const mv::Dataset<Points>& newPoints);
     /** Invoked when the position points dataset changes */
     void positionDatasetChanged();
 
@@ -65,6 +51,7 @@ public: // Miscellaneous
     mv::Dataset<Points>& getPositionDataset() { return _points; }
 
 public: // Serialization
+
     /**
     * Load plugin from variant map
     * @param Variant map representation of the plugin
@@ -87,61 +74,62 @@ protected slots:
 
 
 protected:
-    DropWidget*             _dropWidget;                /** Widget for drag and drop behavior */
-    mv::Dataset<Points>     _points;                    /** Points smart pointer */
-    QString                 _currentDatasetName;        /** Name of the current dataset */
-    QLabel*                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
+    using QLabelArray2 = std::array<QLabel, MultiTriggerAction::Size>;
 
-    MultiTriggerAction      _selectionTriggerActions;
-    QLabel                  _selectedCellsLabel[MultiTriggerAction::Size];  
+    DropWidget*                             _dropWidget;                /** Widget for drag and drop behavior */
+    mv::Dataset<Points>                     _points;                    /** Points smart pointer */
+    QLabel*                                 _currentDatasetNameLabel;   /** Label that show the current dataset name */
    
-    QStringList             _geneList;
+    MultiTriggerAction                      _setSelectionTriggerActions;
+    MultiTriggerAction                      _highlightSelectionTriggerActions;
+    LoadedDatasetsAction                    _loadedDatasetsAction;
+    TriggerAction                           _updateStatisticsAction;
+    StringAction                            _filterOnIdAction;
+    StringAction                            _selectedIdAction;
+    TriggerAction                           _copyToClipboardAction;
+    TriggerAction                           _saveToCsvAction;
+    TriggerAction                           _openAdditionalSettingsAction;
+    DimensionPickerAction                   _currentSelectedDimension;
+    AdditionalSettingsDialog                _additionalSettingsDialog;
 
-    LoadedDatasetsAction    _loadedDatasetsAction;
+    QLabelArray2                            _selectedCellsLabel;
+    int                                     _totalTableColumns;
+    QSharedPointer<TableModel>              _tableItemModel;
+    QPointer<TableSortFilterProxyModel>     _sortFilterProxyModel;
+    TableView*                              _tableView;
+    QPointer<ButtonProgressBar>             _buttonProgressBar;
 
-    TriggerAction                       _updateStatisticsAction;
-    StringAction                        _filterOnIdAction;
-    StringAction                         _selectedIdAction;
-    QSharedPointer<TableModel>     _tableItemModel;
-    QPointer<TableSortFilterProxyModel>      _sortFilterProxyModel;
-    TableView*                          _tableView;
-    QPointer<ButtonProgressBar>         _buttonProgressBar;
-    TriggerAction                       _copyToClipboardAction;
-    TriggerAction                       _saveToCsvAction;
+    QVector<WidgetAction*>                  _serializedActions;
+    QByteArray                              _headerState;
 
-    QVector<WidgetAction*>              _serializedActions;
-    QByteArray                          _headerState;
+    std::vector<QTableWidgetItem*>          _geneTableItems;
+    std::vector<QTableWidgetItem*>          _diffTableItems;
 
+    std::vector<float>                      _minValues;
+    std::vector<float>                      _rescaleValues;
 
-    std::vector<QTableWidgetItem*> _geneTableItems;
-    std::vector<QTableWidgetItem*> _diffTableItems;
-
-    std::vector<float> minValues;
-    std::vector<float> rescaleValues;
-
-    int selOpt = 0;
-    std::vector<uint32_t> selectionA;
-    std::vector<uint32_t> selectionB;
+    std::vector<uint32_t>                   _selectionA;
+    std::vector<uint32_t>                   _selectionB;
 
     // TEMP: toggle for normalization within the loaded dataset
-    ToggleAction _normAction; // min max normalization
-    bool _norm = false;
+    ToggleAction                            _normAction; // min max normalization
+    bool                                    _norm = false;
 
     // TEMP: slider for threshold for % expressed
-    DecimalAction _thresholdExpressedAction; // threshold for % expressed
+    DecimalAction                           _thresholdExpressedAction; // threshold for % expressed
+
 };
 
-/**
- * Example view plugin factory class
- *
- * Note: Factory does not need to be altered (merely responsible for generating new plugins when requested)
- */
+
+// =============================================================================
+// Factory
+// =============================================================================
 class DifferentialExpressionPluginFactory : public ViewPluginFactory
 {
     Q_INTERFACES(mv::plugin::ViewPluginFactory mv::plugin::PluginFactory)
     Q_OBJECT
     Q_PLUGIN_METADATA(IID   "nl.BioVault.DifferentialExpressionPlugin"
-                      FILE  "DifferentialExpressionPlugin.json")
+                      FILE  "PluginInfo.json")
 
 public:
 
