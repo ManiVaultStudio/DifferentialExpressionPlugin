@@ -63,6 +63,19 @@ bool checkSurjectiveMapping(const mv::LinkedData* linkedData, const std::uint32_
 // checks whether the mapping covers all elements in the target
 bool checkSelectionMapping(const mv::Dataset<Points>& other, const mv::Dataset<Points>& current);
 
+inline bool isMappingValid(const mv::LinkedData* selectionMapping, unsigned int numPointsTarget, const mv::Dataset<Points>& testData, bool checkSurjective = true) {
+    if (!selectionMapping)
+        return false;
+    
+    if (numPointsTarget != testData->getNumPoints())
+        return false;
+
+    if (checkSurjective)
+        return checkSurjectiveMapping(selectionMapping, numPointsTarget);
+
+    return true;
+}
+
 // 
 // AdditionalSettingsDialog
 //
@@ -87,6 +100,8 @@ public: // Getter
 
     mv::gui::DatasetPickerAction& getSelectionMappingSourcePicker() { return _selectionMappingSourcePicker; }
 
+    bool checkMappingSurjective() const { return _checkMappingSurjective.isChecked(); }
+
     std::vector<uint32_t>& getSelection(const QString& selectionName) {
         if (selectionName == "A")
             return _selectionA;
@@ -105,6 +120,7 @@ public: // Setter
 private:
     mv::gui::TriggerAction          _okButton;
     mv::gui::DatasetPickerAction    _selectionMappingSourcePicker;
+    mv::gui::ToggleAction           _checkMappingSurjective;
 
     mv::Dataset<Points>             _currentData = {};
     mv::gui::StringAction           _currentDataGUID;      // internal for serialization

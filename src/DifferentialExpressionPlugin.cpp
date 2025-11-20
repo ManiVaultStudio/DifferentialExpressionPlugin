@@ -398,10 +398,7 @@ void DifferentialExpressionPlugin::init()
 
             // Check if the selection mapping makes sense
             const auto [selectionMapping, numPointsTarget] = getSelectionMappingOtherToCurrent(otherData, _points);
-            const bool useOtherSelection =
-                selectionMapping != nullptr &&
-                numPointsTarget == _points->getNumPoints() &&
-                checkSurjectiveMapping(selectionMapping, numPointsTarget);
+            const bool useOtherSelection = isMappingValid(selectionMapping, numPointsTarget, _points, _additionalSettingsDialog.checkMappingSurjective());
 
             otherData->getSelection<Points>()->indices = useOtherSelection ? _additionalSettingsDialog.getSelection(selectionName) : std::vector<uint32_t>{};
             

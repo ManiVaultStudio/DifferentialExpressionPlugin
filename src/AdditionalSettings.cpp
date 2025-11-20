@@ -99,6 +99,7 @@ AdditionalSettingsDialog::AdditionalSettingsDialog(const mv::Dataset<Points>& cu
     mv::util::Serializable("AdditionalSettingsDialog"),
     _okButton(this, "Ok"),
     _selectionMappingSourcePicker(this, "Selection mapping source"),
+    _checkMappingSurjective(this, "Check mapping surjectivity", true),
     _currentDataGUID(this, "currentDataGUID")
 {
     setWindowTitle("Additional DE Viewer settings");
@@ -106,6 +107,8 @@ AdditionalSettingsDialog::AdditionalSettingsDialog(const mv::Dataset<Points>& cu
     setModal(false);
 
     setCurrentData(currentData);
+
+    _checkMappingSurjective.setToolTip("Only un-check this if you really know what you are doing.");
 
     connect(&_okButton, &mv::gui::TriggerAction::triggered, this, &QDialog::accept);
 
@@ -115,6 +118,7 @@ AdditionalSettingsDialog::AdditionalSettingsDialog(const mv::Dataset<Points>& cu
 
     layout->addWidget(_selectionMappingSourcePicker.createLabelWidget(this), ++row, 0, 1, 1);
     layout->addWidget(_selectionMappingSourcePicker.createWidget(this), row, 1, 1, -1);
+    layout->addWidget(_checkMappingSurjective.createWidget(this), ++row, 1, 1, -1);
 
     layout->addWidget(_okButton.createWidget(this), ++row, 0, 1, -1, Qt::AlignRight);
 
