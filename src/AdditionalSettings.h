@@ -87,6 +87,8 @@ public: // Getter
 
     mv::gui::DatasetPickerAction& getSelectionMappingSourcePicker() { return _selectionMappingSourcePicker; }
 
+    bool checkMappingSurjective() const { return _checkMappingSurjective.isChecked(); }
+
     std::vector<uint32_t>& getSelection(const QString& selectionName) {
         if (selectionName == "A")
             return _selectionA;
@@ -105,6 +107,7 @@ public: // Setter
 private:
     mv::gui::TriggerAction          _okButton;
     mv::gui::DatasetPickerAction    _selectionMappingSourcePicker;
+    mv::gui::ToggleAction           _checkMappingSurjective;
 
     mv::Dataset<Points>             _currentData = {};
     mv::gui::StringAction           _currentDataGUID;      // internal for serialization
