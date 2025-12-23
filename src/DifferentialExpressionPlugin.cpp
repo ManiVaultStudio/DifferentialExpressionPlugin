@@ -650,6 +650,7 @@ void DifferentialExpressionPlugin::computeDE()
         return vec[vec.size() / 2];
         };
 
+    // sample standard deviation
     auto computeSD = [](const std::vector<float>& vec, float mean) -> float {
         if (vec.size() < 2)
             return 0.0f;
@@ -660,7 +661,7 @@ void DifferentialExpressionPlugin::computeDE()
             const float diff = val - mean;
             sum += diff * diff;
         }
-        return std::sqrt(sum / static_cast<float>(vec.size()));
+        return std::sqrt(sum / (static_cast<float>(vec.size()) - 1.0f));
         };
 
     auto normAvg = [&](const std::vector<float>& avgs, const std::ptrdiff_t dim) -> float {
