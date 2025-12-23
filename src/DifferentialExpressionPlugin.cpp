@@ -273,7 +273,7 @@ void DifferentialExpressionPlugin::init()
         layout->addWidget(_buttonProgressBar);
     }
 
-    _totalTableColumns = 8;
+    _totalTableColumns = 10;
 
     _tableItemModel->startModelBuilding(_totalTableColumns, 0);
     _tableItemModel->setHorizontalHeader(0, QString("ID"));
@@ -282,8 +282,10 @@ void DifferentialExpressionPlugin::init()
     _tableItemModel->setHorizontalHeader(3, QString("Mean (Sel. 2)"));
     _tableItemModel->setHorizontalHeader(4, QString("Median (Sel. 1)"));
     _tableItemModel->setHorizontalHeader(5, QString("Median (Sel. 2)"));
-    _tableItemModel->setHorizontalHeader(6, QString("% Expressed (Sel. 1)"));
-    _tableItemModel->setHorizontalHeader(7, QString("% Expressed (Sel. 2)"));
+    _tableItemModel->setHorizontalHeader(6, QString("SD (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(7, QString("SD (Sel. 2)"));
+    _tableItemModel->setHorizontalHeader(8, QString("% Expressed (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(9, QString("% Expressed (Sel. 2)"));
     _tableItemModel->endModelBuilding();
 
     // Apply the layout
@@ -620,6 +622,10 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> mediansA(numDimensions, 0);
     std::vector<float> mediansB(numDimensions, 0);
 
+    // for SD
+    std::vector<float> SDA(numDimensions, 0);
+    std::vector<float> SDB(numDimensions, 0);
+
     // for percentage expressed
     std::vector<std::size_t> countExpressedA(numDimensions, 0);
     std::vector<std::size_t> countExpressedB(numDimensions, 0);
@@ -632,7 +638,7 @@ void DifferentialExpressionPlugin::computeDE()
         local::visitElements(_points, selectionIDs, [&means, &valCopies, &countExpressed, thr](auto globalRowID, auto localRowID, auto column, auto value)
             {
                 means[column] += value;
-                valCopies[column][localRowID] = value; // for median
+                valCopies[column][localRowID] = value; // for median and SD
 
                 if (value > thr)
                     countExpressed[column]++;
@@ -642,6 +648,19 @@ void DifferentialExpressionPlugin::computeDE()
     auto computeMedian = [](std::vector<float>& vec) -> float {
         std::nth_element(vec.begin(), vec.begin() + vec.size() / 2, vec.end());
         return vec[vec.size() / 2];
+        };
+
+    auto computeSD = [](const std::vector<float>& vec, float mean) -> float {
+        if (vec.size() < 2)
+            return 0.0f;
+
+        float sum = 0.0f;
+        for (const float& val : vec)
+        {
+            const float diff = val - mean;
+            sum += diff * diff;
+        }
+        return std::sqrt(sum / static_cast<float>(vec.size()));
         };
 
     auto normAvg = [&](const std::vector<float>& avgs, const std::ptrdiff_t dim) -> float {
@@ -664,12 +683,20 @@ void DifferentialExpressionPlugin::computeDE()
         mediansA[d] = computeMedian(valuesA[d]);
         mediansB[d] = computeMedian(valuesB[d]);
 
+        // compute SD
+        SDA[d] = computeSD(valuesA[d], meansA[d]);
+        SDB[d] = computeSD(valuesB[d], meansB[d]);
+
         // then min max - optional by toggle action
         if (_norm) {
             meansA[d]   = normAvg(meansA, d);
             meansB[d]   = normAvg(meansB, d);
             mediansA[d] = normAvg(mediansA, d);
             mediansB[d] = normAvg(mediansB, d);
+
+            // if norm, rescale SD as well
+            SDA[d] = SDA[d] * _rescaleValues[d];
+            SDB[d] = SDB[d] * _rescaleValues[d];
         }
 
         // compute percentage expressed
@@ -690,6 +717,8 @@ void DifferentialExpressionPlugin::computeDE()
             local::fround(meansB[dimension], 3),
             local::fround(mediansA[dimension], 3),
             local::fround(mediansB[dimension], 3),
+            local::fround(SDA[dimension], 3),
+            local::fround(SDB[dimension], 3),
             local::fround(pctExpressedA[dimension], 3),
             local::fround(pctExpressedB[dimension], 3)
         };
