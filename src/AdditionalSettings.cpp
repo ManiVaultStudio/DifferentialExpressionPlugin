@@ -24,7 +24,7 @@
 // Utility functions
 //
 
-std::pair<const mv::LinkedData*, unsigned int> getSelectionMapping(const mv::Dataset<Points>& source, const mv::Dataset<Points>& target, LinkedDataCondition checkMapping) {
+std::pair<const mv::LinkedData*, std::uint64_t> getSelectionMapping(const mv::Dataset<Points>& source, const mv::Dataset<Points>& target, LinkedDataCondition checkMapping) {
     const std::vector<mv::LinkedData>& linkedDatas = source->getLinkedData();
 
     if (linkedDatas.empty())
@@ -44,7 +44,7 @@ std::pair<const mv::LinkedData*, unsigned int> getSelectionMapping(const mv::Dat
     return { nullptr, 0 };
 }
 
-std::pair<const mv::LinkedData*, unsigned int> getSelectionMappingOtherToCurrent(const mv::Dataset<Points>& other, const mv::Dataset<Points>& current) {
+std::pair<const mv::LinkedData*, std::uint64_t> getSelectionMappingOtherToCurrent(const mv::Dataset<Points>& other, const mv::Dataset<Points>& current) {
     auto testTarget = [](const mv::LinkedData& linkedData, const mv::Dataset<Points>& current) -> bool {
         return linkedData.getTargetDataset() == current;
         };
@@ -52,7 +52,7 @@ std::pair<const mv::LinkedData*, unsigned int> getSelectionMappingOtherToCurrent
     return getSelectionMapping(other, current, testTarget);
 }
 
-bool checkSurjectiveMapping(const mv::LinkedData* linkedData, const std::uint32_t numPointsInTarget) {
+bool checkSurjectiveMapping(const mv::LinkedData* linkedData, const std::uint64_t numPointsInTarget) {
     if (linkedData == nullptr)
         return false;
 
