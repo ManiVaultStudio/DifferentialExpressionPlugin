@@ -117,6 +117,8 @@ protected:
 
     // TEMP: slider for threshold for % expressed
     DecimalAction                           _thresholdExpressedAction; // threshold for % expressed
+    ToggleAction                            _additionalCalculationsAction; // able or disable additional calculations (SD, %expressed)
+    bool                                    _useAdditionalCalculations = false;
 
 };
 

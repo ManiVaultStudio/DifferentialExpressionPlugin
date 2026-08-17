@@ -121,6 +121,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _thresholdExpressedAction(&getWidget(), "Threshold %expressed", 0.0f, 4.0f, 0.0f, 1),
     _openAdditionalSettingsAction(&getWidget(), "Open additional settings"),
     _normAction(&getWidget(), "Min-max normalization"),
+    _additionalCalculationsAction(&getWidget(), "Additional calculations"),
     _currentSelectedDimension(this, "Selected dimension"),
     _additionalSettingsDialog()
 {
@@ -226,8 +227,27 @@ void DifferentialExpressionPlugin::init()
 
         QHBoxLayout* toolBarLayout = new QHBoxLayout;
         toolBarLayout->addWidget(filterWidget, 6);
-        toolBarLayout->addWidget(_normAction.createWidget(&mainWidget), 2);
-        toolBarLayout->addWidget(_thresholdExpressedAction.createWidget(&mainWidget), 2);
+
+        QWidget* normWidget = _normAction.createWidget(&mainWidget);
+        QWidget* thresholdWidget = _thresholdExpressedAction.createWidget(&mainWidget);
+
+        toolBarLayout->addWidget(_additionalCalculationsAction.createWidget(&mainWidget), 2);
+        toolBarLayout->addWidget(normWidget, 2);
+        toolBarLayout->addWidget(thresholdWidget, 2);
+
+        bool showExtra = _additionalCalculationsAction.isChecked();
+        normWidget->setVisible(showExtra);
+        thresholdWidget->setVisible(showExtra);
+
+        // Connect the toggle action to dynamically update their visibility
+        connect(&_additionalCalculationsAction, &mv::gui::ToggleAction::toggled, this, [normWidget, thresholdWidget, this]() {
+            _useAdditionalCalculations = _additionalCalculationsAction.isChecked();
+
+            normWidget->setVisible(_useAdditionalCalculations);
+            thresholdWidget->setVisible(_useAdditionalCalculations);
+
+            _updateStatisticsAction.trigger();
+            });
 
         layout->addLayout(toolBarLayout);
     }
@@ -273,7 +293,7 @@ void DifferentialExpressionPlugin::init()
         layout->addWidget(_buttonProgressBar);
     }
 
-    _totalTableColumns = 10;
+    _totalTableColumns = _additionalCalculationsAction.isChecked() ? 10 : 6;
 
     _tableItemModel->startModelBuilding(_totalTableColumns, 0);
     _tableItemModel->setHorizontalHeader(0, QString("ID"));
@@ -282,10 +302,13 @@ void DifferentialExpressionPlugin::init()
     _tableItemModel->setHorizontalHeader(3, QString("Mean (Sel. 2)"));
     _tableItemModel->setHorizontalHeader(4, QString("Median (Sel. 1)"));
     _tableItemModel->setHorizontalHeader(5, QString("Median (Sel. 2)"));
-    _tableItemModel->setHorizontalHeader(6, QString("SD (Sel. 1)"));
-    _tableItemModel->setHorizontalHeader(7, QString("SD (Sel. 2)"));
-    _tableItemModel->setHorizontalHeader(8, QString("% Expressed (Sel. 1)"));
-    _tableItemModel->setHorizontalHeader(9, QString("% Expressed (Sel. 2)"));
+
+    if (_totalTableColumns == 10) {
+        _tableItemModel->setHorizontalHeader(6, QString("SD (Sel. 1)"));
+        _tableItemModel->setHorizontalHeader(7, QString("SD (Sel. 2)"));
+        _tableItemModel->setHorizontalHeader(8, QString("% Expressed (Sel. 1)"));
+        _tableItemModel->setHorizontalHeader(9, QString("% Expressed (Sel. 2)"));
+    }
     _tableItemModel->endModelBuilding();
 
     // Apply the layout
@@ -601,12 +624,14 @@ void DifferentialExpressionPlugin::computeDE()
 
     _tableItemModel->invalidate();
 
-    // Compute differential expr
     qDebug() << "ClusterDifferentialExpressionPlugin: Computing differential expression.";
 
     const std::ptrdiff_t numDimensions = _points->getNumDimensions();
     const size_t selectionSizeA = _selectionA.size();
     const size_t selectionSizeB = _selectionB.size();
+
+    // Determine dynamic column counts based on the toggle
+    _totalTableColumns = _useAdditionalCalculations ? 10 : 6;
 
     // for mean, sum all values and divide by size later
     std::vector<float> meansA(numDimensions, 0);
@@ -619,6 +644,7 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> mediansA(numDimensions, 0);
     std::vector<float> mediansB(numDimensions, 0);
 
+    // Optional calculation vectors
     // for SD
     std::vector<float> SDA(numDimensions, 0);
     std::vector<float> SDB(numDimensions, 0);
@@ -628,17 +654,19 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<std::size_t> countExpressedB(numDimensions, 0);
     std::vector<float> pctExpressedA(numDimensions, 0);
     std::vector<float> pctExpressedB(numDimensions, 0);
+
     float thr = _thresholdExpressedAction.getValue();
 
-
+    // only computes extra stats if _useAdditionalCalculations is true
     auto computeAvgHelper = [this](const std::vector<uint32_t>& selectionIDs, const float thr, std::vector<float>& means, std::vector<std::vector<float>>& valCopies, std::vector<std::size_t>& countExpressed) -> void {
-        local::visitElements(_points, selectionIDs, [&means, &valCopies, &countExpressed, thr](auto globalRowID, auto localRowID, auto column, auto value)
+        local::visitElements(_points, selectionIDs, [&means, &valCopies, &countExpressed, thr, this](auto globalRowID, auto localRowID, auto column, auto value)
             {
                 means[column] += value;
-                valCopies[column][localRowID] = value; // for median and SD
+                valCopies[column][localRowID] = value;// for median and SD
 
-                if (value > thr)
+                if (_useAdditionalCalculations && value > thr) {
                     countExpressed[column]++;
+                }
             });
         };
 
@@ -649,11 +677,11 @@ void DifferentialExpressionPlugin::computeDE()
 
     // sample standard deviation
     auto computeSD = [](const std::vector<float>& vec, float mean) -> float {
-        if (vec.size() < 2)
+        if (vec.size() < 2) 
             return 0.0f;
 
         float sum = 0.0f;
-        for (const float& val : vec)
+        for (const float& val : vec) 
         {
             const float diff = val - mean;
             sum += diff * diff;
@@ -673,56 +701,70 @@ void DifferentialExpressionPlugin::computeDE()
 #pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t d = 0; d < numDimensions; d++)
     {
-        // first divide means by number of rows
         meansA[d] /= selectionSizeA;
         meansB[d] /= selectionSizeB;
-
-        // compute median
         mediansA[d] = computeMedian(valuesA[d]);
         mediansB[d] = computeMedian(valuesB[d]);
 
-        // compute SD
-        SDA[d] = computeSD(valuesA[d], meansA[d]);
-        SDB[d] = computeSD(valuesB[d], meansB[d]);
+        if (_useAdditionalCalculations) {
+            SDA[d] = computeSD(valuesA[d], meansA[d]);
+            SDB[d] = computeSD(valuesB[d], meansB[d]);
+            pctExpressedA[d] = 100.0f * countExpressedA[d] / static_cast<float>(selectionSizeA);
+            pctExpressedB[d] = 100.0f * countExpressedB[d] / static_cast<float>(selectionSizeB);
+        }
 
-        // then min max - optional by toggle action
+        // Optional normalization
         if (_norm) {
-            meansA[d]   = normAvg(meansA, d);
-            meansB[d]   = normAvg(meansB, d);
+            meansA[d] = normAvg(meansA, d);
+            meansB[d] = normAvg(meansB, d);
             mediansA[d] = normAvg(mediansA, d);
             mediansB[d] = normAvg(mediansB, d);
 
-            // if norm, rescale SD as well
-            SDA[d] = SDA[d] * _rescaleValues[d];
-            SDB[d] = SDB[d] * _rescaleValues[d];
+            if (_useAdditionalCalculations) {
+                SDA[d] = SDA[d] * _rescaleValues[d];
+                SDB[d] = SDB[d] * _rescaleValues[d];
+            }
         }
-
-        // compute percentage expressed
-        pctExpressedA[d] = 100.0f * countExpressedA[d] / static_cast<float>(selectionSizeA);
-        pctExpressedB[d] = 100.0f * countExpressedB[d] / static_cast<float>(selectionSizeB);
     }
 
     const auto& dimensionNames = _points->getDimensionNames();
-
     _tableItemModel->startModelBuilding(_totalTableColumns, numDimensions);
-#pragma omp  parallel for schedule(dynamic,1)
+
+    _tableItemModel->setHorizontalHeader(0, QString("ID"));
+    _tableItemModel->setHorizontalHeader(1, QString("DE"));
+    _tableItemModel->setHorizontalHeader(2, QString("Mean (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(3, QString("Mean (Sel. 2)"));
+    _tableItemModel->setHorizontalHeader(4, QString("Median (Sel. 1)"));
+    _tableItemModel->setHorizontalHeader(5, QString("Median (Sel. 2)"));
+
+    if (_useAdditionalCalculations) {
+        _tableItemModel->setHorizontalHeader(6, QString("SD (Sel. 1)"));
+        _tableItemModel->setHorizontalHeader(7, QString("SD (Sel. 2)"));
+        _tableItemModel->setHorizontalHeader(8, QString("% Expressed (Sel. 1)"));
+        _tableItemModel->setHorizontalHeader(9, QString("% Expressed (Sel. 2)"));
+    }
+
+#pragma omp parallel for schedule(dynamic,1)
     for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
     {
-        std::vector<QVariant> dataVector = {
-            dimensionNames[dimension],
-            local::fround(meansA[dimension] - meansB[dimension], 3),
-            local::fround(meansA[dimension], 3),
-            local::fround(meansB[dimension], 3),
-            local::fround(mediansA[dimension], 3),
-            local::fround(mediansB[dimension], 3),
-            local::fround(SDA[dimension], 3),
-            local::fround(SDB[dimension], 3),
-            local::fround(pctExpressedA[dimension], 3),
-            local::fround(pctExpressedB[dimension], 3)
-        };
+        std::vector<QVariant> dataVector;
+        dataVector.reserve(_totalTableColumns);
+
+        dataVector.push_back(dimensionNames[dimension]);
+        dataVector.push_back(local::fround(meansA[dimension] - meansB[dimension], 3));
+        dataVector.push_back(local::fround(meansA[dimension], 3));
+        dataVector.push_back(local::fround(meansB[dimension], 3));
+        dataVector.push_back(local::fround(mediansA[dimension], 3));
+        dataVector.push_back(local::fround(mediansB[dimension], 3));
+
+        if (_useAdditionalCalculations) {
+            dataVector.push_back(local::fround(SDA[dimension], 3));
+            dataVector.push_back(local::fround(SDB[dimension], 3));
+            dataVector.push_back(local::fround(pctExpressedA[dimension], 3));
+            dataVector.push_back(local::fround(pctExpressedB[dimension], 3));
+        }
 
         assert(dataVector.size() == _totalTableColumns);
-
         _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
     }
     _tableItemModel->endModelBuilding();
