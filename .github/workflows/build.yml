@@ -3,20 +3,16 @@ name: DifferentialExpressionPlugin
 on:
   push:
     branches:
-      - main
+      - master
       - 'release/**'
       - 'feature/**'
   pull_request:
   workflow_dispatch:
 
-env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
-  BUILD_TYPE: Release
-
 # for matrix check https://docs.github.com/en/actions/reference/specifications-for-github-hosted-runners
 jobs:
   prepare_matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     outputs:
       matrix: ${{ steps.matrix_setup.outputs.matrix }}
     steps:
@@ -38,7 +34,7 @@ jobs:
 
     steps:
       - name: Checkout the source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
           ref: ${{ github.event.pull_request.head.ref }}
@@ -49,12 +45,12 @@ jobs:
           sudo xcode-select -switch /Applications/Xcode_${{matrix.build-xcode-version}}.app
 
       - name: Setup python version
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Start ssh key agent
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.RULESSUPPORT_DEPLOY_KEY }}
 
@@ -76,6 +72,11 @@ jobs:
           conan-password: ${{secrets.LKEB_UPLOAD_USER_PASSWORD}}
           conan-pem: ${{secrets.LKEB_UPLOAD_CERT_CHAIN}}
           rs_ssh_key: ${{ secrets.RULESSUPPORT_DEPLOY_KEY }}
+          sentry-upload: startsWith(github.ref, 'refs/heads/release/')
+          sentry-url: ${{secrets.LKEB_SENTRY_URL }}
+          sentry-org: ${{secrets.LKEB_SENTRY_ORG }}
+          sentry-project: ${{secrets.LKEB_SENTRY_PROJECT }}
+          sentry-auth-token: ${{secrets.LKEB_SENTRY_AUTH_TOKEN }}
 
       - name: Linux build
         if: startsWith(matrix.os, 'ubuntu')

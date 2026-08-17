@@ -21,9 +21,9 @@
 // Utility functions
 //
 
-// This only checks the immedeate parent and is deliberately not recursive
+// This only checks the immediate parent and is deliberately not recursive
 // We might consider the latter in the future, but might need to cover edge cases
-inline bool parentHasSameNumPoints(const mv::Dataset<mv::DatasetImpl> data, const mv::Dataset<Points>& other) {
+inline bool parentHasSameNumPoints(const mv::Dataset<mv::DatasetImpl>& data, const mv::Dataset<Points>& other) {
     if (!data->isDerivedData())
         return false;
 
@@ -51,17 +51,30 @@ using LinkedDataCondition = std::function<bool(const mv::LinkedData& linkedData,
         };
     This function will return the first match of the condition
 */
-std::pair<const mv::LinkedData*, unsigned int> getSelectionMapping(const mv::Dataset<Points>& source, const mv::Dataset<Points>& target, LinkedDataCondition checkMapping);
+std::pair<const mv::LinkedData*, std::uint64_t> getSelectionMapping(const mv::Dataset<Points>& source, const mv::Dataset<Points>& target, LinkedDataCondition checkMapping);
 
 // Returns a mapping (linked data) from other whose target is current
-std::pair<const mv::LinkedData*, unsigned int> getSelectionMappingOtherToCurrent(const mv::Dataset<Points>& other, const mv::Dataset<Points>& current);
+std::pair<const mv::LinkedData*, std::uint64_t> getSelectionMappingOtherToCurrent(const mv::Dataset<Points>& other, const mv::Dataset<Points>& current);
 
 // Check if the mapping is surjective, i.e. hits all elements in the target
-bool checkSurjectiveMapping(const mv::LinkedData* linkedData, const std::uint32_t numPointsInTarget);
+bool checkSurjectiveMapping(const mv::LinkedData* linkedData, const std::uint64_t numPointsInTarget);
 
 // returns whether there is a selection map from other to current or current to other (or respective parents)
 // checks whether the mapping covers all elements in the target
 bool checkSelectionMapping(const mv::Dataset<Points>& other, const mv::Dataset<Points>& current);
+
+inline bool isMappingValid(const mv::LinkedData* selectionMapping, std::uint64_t numPointsTarget, const mv::Dataset<Points>& testData, bool checkSurjective = true) {
+    if (!selectionMapping)
+        return false;
+    
+    if (numPointsTarget != testData->getNumPoints())
+        return false;
+
+    if (checkSurjective)
+        return checkSurjectiveMapping(selectionMapping, numPointsTarget);
+
+    return true;
+}
 
 // 
 // AdditionalSettingsDialog
@@ -87,6 +100,8 @@ public: // Getter
 
     mv::gui::DatasetPickerAction& getSelectionMappingSourcePicker() { return _selectionMappingSourcePicker; }
 
+    bool checkMappingSurjective() const { return _checkMappingSurjective.isChecked(); }
+
     std::vector<uint32_t>& getSelection(const QString& selectionName) {
         if (selectionName == "A")
             return _selectionA;
@@ -105,6 +120,7 @@ public: // Setter
 private:
     mv::gui::TriggerAction          _okButton;
     mv::gui::DatasetPickerAction    _selectionMappingSourcePicker;
+    mv::gui::ToggleAction           _checkMappingSurjective;
 
     mv::Dataset<Points>             _currentData = {};
     mv::gui::StringAction           _currentDataGUID;      // internal for serialization
