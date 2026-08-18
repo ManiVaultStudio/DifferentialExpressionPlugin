@@ -57,7 +57,7 @@ namespace local
         else
         {
 #ifdef _DEBUG
-            qDebug() << "ClusterDifferentialExpressionPlugin: Error: requested " << QMetaType::fromType<T>().name() << " but value is of type " << variant.metaType().name();
+            qDebug() << "DifferentialExpressionPlugin: Error: requested " << QMetaType::fromType<T>().name() << " but value is of type " << variant.metaType().name();
 #endif
             return T();
         }
@@ -194,6 +194,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
 
     connect(&_thresholdExpressedAction, &DecimalAction::valueChanged, this, [this](float value)
         {
+            qDebug() << "_thresholdExpressedAction value changed to "<< _thresholdExpressedAction.getValue();
             _updateStatisticsAction.trigger();
         });
 
@@ -245,6 +246,13 @@ void DifferentialExpressionPlugin::init()
 
             normWidget->setVisible(_useAdditionalCalculations);
             thresholdWidget->setVisible(_useAdditionalCalculations);
+
+            // force norm and threhold go back to default, if hidden
+            if (!_useAdditionalCalculations)
+            {
+                _normAction.setChecked(false);
+                _thresholdExpressedAction.setValue(0.0f);
+            }
 
             _updateStatisticsAction.trigger();
             });
@@ -343,7 +351,7 @@ void DifferentialExpressionPlugin::init()
         // Visually indicate if the dataset is of the wrong data type and thus cannot be dropped
         if (!dataTypes.contains(dataType)) {
             dropRegions << new DropWidget::DropRegion(this, "Incompatible data", "This type of data is not supported", "exclamation-circle", false);
-            qDebug() << "ClusterDifferentialExpressionPlugin: Incompatible data: This type of data is not supported";
+            qDebug() << "DifferentialExpressionPlugin: Incompatible data: This type of data is not supported";
         }
         else
         {
@@ -358,7 +366,7 @@ void DifferentialExpressionPlugin::init()
 
                     // Dataset cannot be dropped because it is already loaded
                     dropRegions << new DropWidget::DropRegion(this, "Warning", "Data already loaded", "exclamation-circle", false);
-                    qDebug() << "ClusterDifferentialExpressionPlugin: Warning: Data already loaded";
+                    qDebug() << "DifferentialExpressionPlugin: Warning: Data already loaded";
                 }
                 else {
 
@@ -415,7 +423,7 @@ void DifferentialExpressionPlugin::init()
         otherDataSelection       = otherData.isValid() ? otherData->getSelection<Points>()->indices : std::vector<uint32_t>{};
         sortAndUnique(otherDataSelection);
 
-        qDebug() << "ClusterDifferentialExpressionPlugin: Saved selection " << selectionName << " with " << selection.size() << " items.";
+        qDebug() << "DifferentialExpressionPlugin: Saved selection " << selectionName << " with " << selection.size() << " items.";
 
         if (_selectionA.size() != 0 && _selectionB.size() != 0)
             _buttonProgressBar->showStatus(TableModel::Status::OutDated);
@@ -512,7 +520,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 
     if (recompute)
     {
-        qDebug() << "ClusterDifferentialExpressionPlugin: Computing dimension ranges";
+        qDebug() << "DifferentialExpressionPlugin: Computing dimension ranges";
         _minValues.resize(numDimensions, std::numeric_limits<float>::max());
         _rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
 
@@ -553,7 +561,7 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
         recompute |= (maxList.size() != numDimensions);
         if (!recompute)
         {
-            qDebug() << "ClusterDifferentialExpressionPlugin: Loading dimension ranges";
+            qDebug() << "DifferentialExpressionPlugin: Loading dimension ranges";
             // load them from properties
             _minValues.resize(numDimensions);
             _rescaleValues.resize(numDimensions);
@@ -597,7 +605,7 @@ void DifferentialExpressionPlugin::writeToCSV() const
     // Only continue when the dialog has not been not canceled and the file name is non-empty.
     if (fileName.isNull() || fileName.isEmpty())
     {
-        qDebug() << "ClusterDifferentialExpressionPlugin: No data written to disk - File name empty";
+        qDebug() << "DifferentialExpressionPlugin: No data written to disk - File name empty";
         return;
     }
     else
@@ -624,7 +632,7 @@ void DifferentialExpressionPlugin::computeDE()
 
     _tableItemModel->invalidate();
 
-    qDebug() << "ClusterDifferentialExpressionPlugin: Computing differential expression.";
+    qDebug() << "DifferentialExpressionPlugin: Computing differential expression.";
 
     const std::ptrdiff_t numDimensions = _points->getNumDimensions();
     const size_t selectionSizeA = _selectionA.size();
@@ -656,6 +664,8 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> pctExpressedB(numDimensions, 0);
 
     float thr = _thresholdExpressedAction.getValue();
+    qDebug() << "ComputeDE thr = " << thr;
+    qDebug() << "Just checking _useAdditionalCalculations " << _useAdditionalCalculations;
 
     // only computes extra stats if _useAdditionalCalculations is true
     auto computeAvgHelper = [this](const std::vector<uint32_t>& selectionIDs, const float thr, std::vector<float>& means, std::vector<std::vector<float>>& valCopies, std::vector<std::size_t>& countExpressed) -> void {
