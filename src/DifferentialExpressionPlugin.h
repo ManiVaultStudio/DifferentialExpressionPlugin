@@ -111,15 +111,12 @@ protected:
     std::vector<uint32_t>                   _selectionA;
     std::vector<uint32_t>                   _selectionB;
 
-    // TEMP: toggle for normalization within the loaded dataset
-    ToggleAction                            _normAction; // min max normalization
-    bool                                    _norm = false;
-
-    // TEMP: slider for threshold for % expressed
-    DecimalAction                           _thresholdExpressedAction; // threshold for % expressed
+    // additional calculations
     ToggleAction                            _additionalCalculationsAction; // able or disable additional calculations (SD, %expressed)
     bool                                    _useAdditionalCalculations = false;
-
+    ToggleAction                            _normAction; // min max normalization
+    bool                                    _norm = false;
+    DecimalAction                           _thresholdExpressedAction; // threshold for % expressed
 };
 
 

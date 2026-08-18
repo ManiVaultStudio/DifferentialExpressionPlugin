@@ -118,11 +118,11 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
-    _thresholdExpressedAction(&getWidget(), "Threshold %expressed", 0.0f, 1.0f, 0.0f, 1),
-    _openAdditionalSettingsAction(&getWidget(), "Open additional settings"),
-    _normAction(&getWidget(), "Min-max normalization"),
     _additionalCalculationsAction(&getWidget(), "Additional calculations"),
+    _thresholdExpressedAction(&getWidget(), "Threshold %expressed", 0.0f, 1.0f, 0.0f, 1),
+    _normAction(&getWidget(), "Min-max normalization"),
     _currentSelectedDimension(this, "Selected dimension"),
+    _openAdditionalSettingsAction(&getWidget(), "Open additional settings"),
     _additionalSettingsDialog()
 {
     // This line is mandatory if drag and drop behavior is required
@@ -196,7 +196,6 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
 
     connect(&_thresholdExpressedAction, &DecimalAction::valueChanged, this, [this](float value)
         {
-            qDebug() << "_thresholdExpressedAction value changed to "<< _thresholdExpressedAction.getValue();
             _updateStatisticsAction.trigger();
         });
 
@@ -666,8 +665,6 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> pctExpressedB(numDimensions, 0);
 
     float thr = _thresholdExpressedAction.getValue();
-    qDebug() << "ComputeDE thr = " << thr;
-    qDebug() << "Just checking _useAdditionalCalculations " << _useAdditionalCalculations;
 
     // only computes extra stats if _useAdditionalCalculations is true
     auto computeAvgHelper = [this](const std::vector<uint32_t>& selectionIDs, const float thr, std::vector<float>& means, std::vector<std::vector<float>>& valCopies, std::vector<std::size_t>& countExpressed) -> void {
