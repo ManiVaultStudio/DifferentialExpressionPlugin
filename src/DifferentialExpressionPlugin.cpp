@@ -676,8 +676,17 @@ void DifferentialExpressionPlugin::computeDE()
                 means[column] += value;
                 valCopies[column][localRowID] = value;// for median and SD
 
-                if (_useAdditionalCalculations && value > thr) {
+                // count %expressed based on loaded values
+                /*if (_useAdditionalCalculations && value > thr) {
                     countExpressed[column]++;
+                }*/
+
+                // count %expressed based on norm or not
+                if (_useAdditionalCalculations) {
+                    const float thresholdValue = _norm ? (value - _minValues[column]) * _rescaleValues[column] : value;
+                    if (thresholdValue > thr) {
+                        countExpressed[column]++;
+                    }
                 }
             });
         };
