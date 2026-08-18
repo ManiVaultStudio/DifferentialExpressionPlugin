@@ -22,4 +22,5 @@ Information on more in-depth differential expression techniques can be found in 
 4. The resulting DE computation will be listed in table form, with one row for each dimension of the data (listed in the `ID` column).
 5. You can now sort the table along each column or use the search bar to filter the dimension names.
 
-The "Min-max normalization" option scales both mean (and median) of each selection values with `(selection_mean - global_min) / (global_max - global_min)`. The `global_*` values are computed for all data points, also those not selected.
+Additionally, you can use the toggle "Additional calculations" to show or hide extra calculations("min-max normalization" option, SD and % expressed). The "Min-max normalization" option scales both mean (and median) of each selection values with `(selection_mean - global_min) / (global_max - global_min)`. The `global_*` values are computed for all data points, also those not selected.
+ Threshold for % expressed can be adjusted between 0 and 1 (default is 0).
