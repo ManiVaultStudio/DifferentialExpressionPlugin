@@ -633,11 +633,14 @@ void DifferentialExpressionPlugin::computeDE()
 
     _tableItemModel->invalidate();
 
-    qDebug() << "DifferentialExpressionPlugin: Computing differential expression.";
-
     const std::ptrdiff_t numDimensions = _points->getNumDimensions();
     const size_t selectionSizeA = _selectionA.size();
     const size_t selectionSizeB = _selectionB.size();
+
+    if (selectionSizeA == 0 || selectionSizeB == 0)
+        return;
+
+    qDebug() << "DifferentialExpressionPlugin: Computing differential expression.";
 
     // Determine dynamic column counts based on the toggle
     _totalTableColumns = _useAdditionalCalculations ? 10 : 6;
