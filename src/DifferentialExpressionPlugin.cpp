@@ -118,7 +118,7 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _buttonProgressBar(nullptr),
     _copyToClipboardAction(&getWidget(), "Copy"),
     _saveToCsvAction(&getWidget(), "Save As..."),
-    _thresholdExpressedAction(&getWidget(), "Threshold %expressed", 0.0f, 4.0f, 0.0f, 1),
+    _thresholdExpressedAction(&getWidget(), "Threshold %expressed", 0.0f, 1.0f, 0.0f, 1),
     _openAdditionalSettingsAction(&getWidget(), "Open additional settings"),
     _normAction(&getWidget(), "Min-max normalization"),
     _additionalCalculationsAction(&getWidget(), "Additional calculations"),
@@ -132,6 +132,8 @@ DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* 
     _currentDatasetNameLabel->setAlignment(Qt::AlignCenter);
 
     _normAction.setToolTip("Rescale the data: (selection_mean - global_min) / (global_max - global_min)");
+
+    _thresholdExpressedAction.setDefaultWidgetFlags(DecimalAction::SpinBox);
 
     { // save to CSV
 
