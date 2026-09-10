@@ -9,7 +9,7 @@ git clone https://github.com/ManiVaultStudio/DifferentialExpressionPlugin.git
 This plugin captures variability between user-selected subsets by comparing the difference between expression averages per dimension. It computes the mean and median expression of all items (e.g. cells) in a selection and defines the differential expression as the difference of the means.
 
 <p align="middle">
-    <img src="docs/figs/screenshot.png" align="middle" width="80%" />
+    <img src="docs/figs/Screenshot_new.png" align="middle" width="80%" />
 </p>
 
 Information on more in-depth differential expression techniques can be found in many places, e.g. in _Differential gene expression analysis pipelines and bioinformatic tools for the identification of specific biomarkers: A review_ (2024, [10.1016/j.csbj.2024.02.018](https://doi.org/10.1016/j.csbj.2024.02.018)).
@@ -22,4 +22,5 @@ Information on more in-depth differential expression techniques can be found in 
 4. The resulting DE computation will be listed in table form, with one row for each dimension of the data (listed in the `ID` column).
 5. You can now sort the table along each column or use the search bar to filter the dimension names.
 
-The "Min-max normalization" option scales both mean (and median) of each selection values with `(selection_mean - global_min) / (global_max - global_min)`. The `global_*` values are computed for all data points, also those not selected.
+Additionally, you can use the toggle "Additional calculations" to show or hide extra calculations("min-max normalization" option, SD and % expressed). The "Min-max normalization" option scales both mean (and median) of each selection values with `(selection_mean - global_min) / (global_max - global_min)`. The `global_*` values are computed for all data points, also those not selected.
+ Threshold for % expressed can be adjusted between 0 and 1 (default is 0).
