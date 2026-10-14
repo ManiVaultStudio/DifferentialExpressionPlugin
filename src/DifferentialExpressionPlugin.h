@@ -117,6 +117,8 @@ protected:
     ToggleAction                            _normAction; // min max normalization
     bool                                    _norm = false;
     DecimalAction                           _thresholdExpressedAction; // threshold for % expressed
+
+    Dataset<Points>                         _currentDimensionDataset;
 };
 
 

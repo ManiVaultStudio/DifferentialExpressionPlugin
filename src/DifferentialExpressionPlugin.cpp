@@ -803,6 +803,28 @@ void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
 
         _selectedIdAction.setString(dimensionName);
         _currentSelectedDimension.setCurrentDimensionName(dimensionName);
+
+        const std::vector<QString>& dimensionNames = _points->getDimensionNames();
+        const auto it = std::find(dimensionNames.begin(), dimensionNames.end(), dimensionName);
+        if (it == dimensionNames.end()) {
+            qWarning() << "DifferentialExpressionPlugin: Dimension not found:"<< dimensionName;
+            return;
+        }
+
+        const int dimensionIndex = static_cast<int>(std::distance(dimensionNames.begin(), it));
+
+        std::vector<float> dimensionValues;
+        _points->extractDataForDimension(dimensionValues, dimensionIndex);
+        
+        if (!_currentDimensionDataset.isValid()) {
+            _currentDimensionDataset = mv::data().createDerivedDataset<Points>("CurrentDimension in DiffView", _points);
+            events().notifyDatasetDataChanged(_currentDimensionDataset);
+        }
+        _currentDimensionDataset->setData(dimensionValues.data(), _points->getNumPoints(), 1);
+        _currentDimensionDataset->setDimensionNames({ dimensionName });
+        events().notifyDatasetDataChanged(_currentDimensionDataset);
+
+
     }
     catch (...) // catch everything
     {
@@ -822,6 +844,12 @@ void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelecti
 void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
 {
     ViewPlugin::fromVariantMap(variantMap);
+
+    // Restore the dataset reference before actions can trigger callbacks.
+    _currentDimensionDataset.reset();
+    const QString currentDimensionDatasetId = variantMap.value("CurrentDimensionDatasetId").toString();
+    if (!currentDimensionDatasetId.isEmpty())
+        _currentDimensionDataset = mv::data().getDataset<Points>(currentDimensionDatasetId);
 
     for (auto action : _serializedActions)
     {
@@ -856,6 +884,8 @@ void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
 QVariantMap DifferentialExpressionPlugin::toVariantMap() const
 {
     QVariantMap variantMap = ViewPlugin::toVariantMap();
+
+    variantMap["CurrentDimensionDatasetId"] = _currentDimensionDataset.isValid() ? _currentDimensionDataset.getDatasetId() : QString();
 
     for (auto action : _serializedActions)
     {
