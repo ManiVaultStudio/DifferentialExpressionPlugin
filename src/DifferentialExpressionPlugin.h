@@ -69,11 +69,13 @@ protected slots:
     void writeToCSV() const;
     void computeDE();
     
-    void tableView_clicked(const QModelIndex& index);
     void tableView_selectionChanged(const QItemSelection& selected, const QItemSelection& deselected);
-
+    void geneComparisonSelectionChanged();
 
 protected:
+    void updateGeneComparisonDataset(const std::vector<float>& values);
+    void updateCurrentDimension(const std::vector<uint32_t>& dimensionIndices);
+
     using QLabelArray2 = std::array<QLabel, MultiTriggerAction::Size>;
 
     DropWidget*                             _dropWidget;                /** Widget for drag and drop behavior */
@@ -119,6 +121,7 @@ protected:
     DecimalAction                           _thresholdExpressedAction; // threshold for % expressed
 
     Dataset<Points>                         _currentDimensionDataset;
+    Dataset<Points>                         _geneComparisonDataset;      /** One point per gene, with independent selection */
 };
 
 

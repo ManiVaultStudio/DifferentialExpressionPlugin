@@ -7,6 +7,8 @@
 #include <QFileDialog>
 #include <QMimeData>
 #include <QPushButton>
+#include <QSignalBlocker>
+#include <QStringList>
 
 #include "AdditionalSettings.h"
 #include "WordWrapHeaderView.h"
@@ -266,7 +268,7 @@ void DifferentialExpressionPlugin::init()
         _tableView = new TableView(&mainWidget);
         _tableView->setModel(_sortFilterProxyModel);
         _tableView->setSortingEnabled(true);
-        _tableView->setSelectionMode(QAbstractItemView::SingleSelection);
+        _tableView->setSelectionMode(QAbstractItemView::ExtendedSelection);
         _tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
         _tableView->setContextMenuPolicy(Qt::ActionsContextMenu);
 
@@ -482,6 +484,7 @@ void DifferentialExpressionPlugin::init()
 
      // Load points when the pointer to the position dataset changes
     connect(&_points, &Dataset<Points>::changed, this, &DifferentialExpressionPlugin::positionDatasetChanged);
+    connect(&_geneComparisonDataset, &Dataset<Points>::dataSelectionChanged, this, &DifferentialExpressionPlugin::geneComparisonSelectionChanged);
 }
 
 
@@ -507,6 +510,10 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
 {
     // Do not show the drop indicator if there is a valid point positions dataset
     _dropWidget->setShowDropIndicator(!_points.isValid());
+
+    _tableItemModel->invalidate();
+    if (!_points.isValid())
+        return;
 
     // Compute normalization
     const auto numDimensions    = _points->getNumDimensions();
@@ -648,6 +655,7 @@ void DifferentialExpressionPlugin::computeDE()
     // for mean, sum all values and divide by size later
     std::vector<float> meansA(numDimensions, 0);
     std::vector<float> meansB(numDimensions, 0);
+    std::vector<float> geneComparisonValues(numDimensions * 2);
 
     // for median, collect per dimension values and sprt later
     // TODO: maybe look for median dynamically, instead of store the vectors
@@ -724,6 +732,10 @@ void DifferentialExpressionPlugin::computeDE()
     {
         meansA[d] /= selectionSizeA;
         meansB[d] /= selectionSizeB;
+
+        // Keep the input scale (usually log expression), before optional min-max normalization.
+        geneComparisonValues[2 * d] = meansA[d];
+        geneComparisonValues[2 * d + 1] = meansB[d];
         mediansA[d] = computeMedian(valuesA[d]);
         mediansB[d] = computeMedian(valuesB[d]);
 
@@ -789,52 +801,159 @@ void DifferentialExpressionPlugin::computeDE()
         _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
     }
     _tableItemModel->endModelBuilding();
+    updateGeneComparisonDataset(geneComparisonValues);
 }
 
-void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
+void DifferentialExpressionPlugin::updateGeneComparisonDataset(const std::vector<float>& values)
 {
-    if (_tableItemModel->status() != TableModel::Status::UpToDate)
+    const auto& dimensionNames = _points->getDimensionNames();
+    QStringList geneNames;
+    for (const auto& dimensionName : dimensionNames)
+        geneNames.append(dimensionName);
+
+    // A hierarchy parent does not share selection: these rows are genes, not cells.
+    if (_geneComparisonDataset.isValid() && _geneComparisonDataset->getProperty("SourceDatasetId").toString() != _points.getDatasetId())
+        _geneComparisonDataset.reset();
+
+    if (!_geneComparisonDataset.isValid()) {
+        _geneComparisonDataset = mv::data().createDataset<Points>("Points", "Gene comparison (mean 1 vs mean 2)", _points);
+    }
+
+    if (!_geneComparisonDataset.isValid())
+        return;
+
+    // A changed gene order makes previous selection indices meaningless.
+    const bool geneOrderChanged = _geneComparisonDataset->getProperty("GeneNames").toStringList() != geneNames;
+    if (geneOrderChanged)
+        _geneComparisonDataset->setSelectionIndices({});
+
+    _geneComparisonDataset->setData(values, 2);
+    _geneComparisonDataset->setGuiName("Gene comparison (mean 1 vs mean 2)");
+    _geneComparisonDataset->setDimensionNames({ "Mean 1", "Mean 2" });
+    _geneComparisonDataset->setProperty("GeneNames", geneNames);
+    _geneComparisonDataset->setProperty("SourceDatasetId", _points.getDatasetId());
+    _geneComparisonDataset->setProperty("SelectionSize1", QVariant::fromValue<qulonglong>(_selectionA.size()));
+    _geneComparisonDataset->setProperty("SelectionSize2", QVariant::fromValue<qulonglong>(_selectionB.size()));
+    _geneComparisonDataset->setProperty("ExpressionScale", "Mean of input expression values; no additional transform");
+    events().notifyDatasetDataChanged(_geneComparisonDataset);
+    if (geneOrderChanged)
+        events().notifyDatasetDataSelectionChanged(_geneComparisonDataset);
+    else
+        geneComparisonSelectionChanged();
+}
+
+void DifferentialExpressionPlugin::updateCurrentDimension(const std::vector<uint32_t>& dimensionIndices)
+{
+    if (!_points.isValid() || dimensionIndices.empty())
         return;
 
     try
     {
-        const QModelIndex firstColumn = index.sibling(index.row(), 0);
-        const QString dimensionName = firstColumn.data().toString();
+        auto geneIndices = dimensionIndices;
+        geneIndices.erase(std::remove_if(geneIndices.begin(), geneIndices.end(), [this](uint32_t index) { return index >= _points->getNumDimensions(); }), geneIndices.end());
+        std::sort(geneIndices.begin(), geneIndices.end());
+        geneIndices.erase(std::unique(geneIndices.begin(), geneIndices.end()), geneIndices.end());
+        if (geneIndices.empty())
+            return;
+
+        const bool singleGene = geneIndices.size() == 1;
+        const QString dimensionName = singleGene ? _points->getDimensionNames()[geneIndices.front()] : QString("Mean expression (%1 genes)").arg(static_cast<qulonglong>(geneIndices.size()));
 
         _selectedIdAction.setString(dimensionName);
-        _currentSelectedDimension.setCurrentDimensionName(dimensionName);
-
-        const std::vector<QString>& dimensionNames = _points->getDimensionNames();
-        const auto it = std::find(dimensionNames.begin(), dimensionNames.end(), dimensionName);
-        if (it == dimensionNames.end()) {
-            qWarning() << "DifferentialExpressionPlugin: Dimension not found:"<< dimensionName;
-            return;
-        }
-
-        const int dimensionIndex = static_cast<int>(std::distance(dimensionNames.begin(), it));
+        _currentSelectedDimension.setCurrentDimensionIndex(singleGene ? static_cast<int>(geneIndices.front()) : -1);
 
         std::vector<float> dimensionValues;
-        _points->extractDataForDimension(dimensionValues, dimensionIndex);
+        if (singleGene) {
+            _points->extractDataForDimension(dimensionValues, static_cast<int>(geneIndices.front()));
+        }
+        else {
+            // Average the supplied values directly, including when they are already log-transformed.
+            std::vector<double> expressionSums(_points->getNumPoints(), 0.0);
+            std::vector<float> geneValues;
+            for (const auto geneIndex : geneIndices) {
+                _points->extractDataForDimension(geneValues, static_cast<int>(geneIndex));
+                for (std::size_t pointIndex = 0; pointIndex < geneValues.size(); ++pointIndex)
+                    expressionSums[pointIndex] += geneValues[pointIndex];
+            }
+            dimensionValues.resize(expressionSums.size());
+            for (std::size_t pointIndex = 0; pointIndex < expressionSums.size(); ++pointIndex)
+                dimensionValues[pointIndex] = static_cast<float>(expressionSums[pointIndex] / geneIndices.size());
+        }
+
+        if (_currentDimensionDataset.isValid() && _currentDimensionDataset->getNextSourceDataset<Points>() != _points)
+            _currentDimensionDataset.reset();
         
         if (!_currentDimensionDataset.isValid()) {
             _currentDimensionDataset = mv::data().createDerivedDataset<Points>("CurrentDimension in DiffView", _points);
-            events().notifyDatasetDataChanged(_currentDimensionDataset);
         }
-        _currentDimensionDataset->setData(dimensionValues.data(), _points->getNumPoints(), 1);
+        if (!_currentDimensionDataset.isValid())
+            return;
+
+        _currentDimensionDataset->setData(dimensionValues, 1);
         _currentDimensionDataset->setDimensionNames({ dimensionName });
         events().notifyDatasetDataChanged(_currentDimensionDataset);
-
-
     }
     catch (...) // catch everything
     {
-        qDebug() << "DifferentialExpressionPlugin::tableView_clicked -> something went wrong :(";
+        qWarning() << "DifferentialExpressionPlugin: Failed to update current dimension";
     }
 }
 
-void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection& selected, const QItemSelection& deselected)
+void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection&, const QItemSelection&)
 {
-    tableView_clicked(selected.indexes().first());
+    if (_tableItemModel->status() != TableModel::Status::UpToDate)
+        return;
+
+    std::vector<uint32_t> geneIndices;
+    for (const auto& proxyIndex : _tableView->selectionModel()->selectedRows())
+        geneIndices.push_back(static_cast<uint32_t>(_sortFilterProxyModel->mapToSource(proxyIndex).row()));
+    std::sort(geneIndices.begin(), geneIndices.end());
+
+    if (_geneComparisonDataset.isValid() && _geneComparisonDataset->getProperty("SourceDatasetId").toString() == _points.getDatasetId()) {
+        // Other plugins still receive the core event; suppress only our own callback.
+        const QSignalBlocker blocker(&_geneComparisonDataset);
+        _geneComparisonDataset->setSelectionIndices(geneIndices);
+        events().notifyDatasetDataSelectionChanged(_geneComparisonDataset);
+    }
+
+    updateCurrentDimension(geneIndices);
+}
+
+void DifferentialExpressionPlugin::geneComparisonSelectionChanged()
+{
+    if (!_geneComparisonDataset.isValid() || !_points.isValid() || !_tableView || _geneComparisonDataset->getProperty("SourceDatasetId").toString() != _points.getDatasetId())
+        return;
+
+    const auto geneNames = _geneComparisonDataset->getProperty("GeneNames").toStringList();
+    const auto& dimensionNames = _points->getDimensionNames();
+    if (geneNames.size() != static_cast<qsizetype>(dimensionNames.size()) || !std::equal(geneNames.begin(), geneNames.end(), dimensionNames.begin()))
+        return;
+
+    const auto& geneIndices = _geneComparisonDataset->getSelectionIndices();
+    if (_tableItemModel->status() == TableModel::Status::UpToDate) {
+        const QSignalBlocker blocker(_tableView->selectionModel());
+        QItemSelection tableSelection;
+        QModelIndex firstVisibleIndex;
+        for (const auto geneIndex : geneIndices) {
+            if (geneIndex >= dimensionNames.size())
+                continue;
+
+            const auto proxyIndex = _sortFilterProxyModel->mapFromSource(_tableItemModel->index(static_cast<int>(geneIndex), 0));
+            if (!proxyIndex.isValid())
+                continue; // The gene is hidden by the table filter.
+
+            tableSelection.select(proxyIndex, proxyIndex);
+            if (!firstVisibleIndex.isValid())
+                firstVisibleIndex = proxyIndex;
+        }
+        _tableView->selectionModel()->select(tableSelection, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        if (firstVisibleIndex.isValid()) {
+            _tableView->selectionModel()->setCurrentIndex(firstVisibleIndex, QItemSelectionModel::NoUpdate);
+            _tableView->scrollTo(firstVisibleIndex);
+        }
+    }
+
+    updateCurrentDimension(geneIndices);
 }
 
 /******************************************************************************
@@ -850,6 +969,11 @@ void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
     const QString currentDimensionDatasetId = variantMap.value("CurrentDimensionDatasetId").toString();
     if (!currentDimensionDatasetId.isEmpty())
         _currentDimensionDataset = mv::data().getDataset<Points>(currentDimensionDatasetId);
+
+    _geneComparisonDataset.reset();
+    const QString geneComparisonDatasetId = variantMap.value("GeneComparisonDatasetId").toString();
+    if (!geneComparisonDatasetId.isEmpty())
+        _geneComparisonDataset = mv::data().getDataset<Points>(geneComparisonDatasetId);
 
     for (auto action : _serializedActions)
     {
@@ -879,6 +1003,7 @@ void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
     }
 
     setPositionDataset(_points);
+    geneComparisonSelectionChanged();
 }
 
 QVariantMap DifferentialExpressionPlugin::toVariantMap() const
@@ -886,6 +1011,7 @@ QVariantMap DifferentialExpressionPlugin::toVariantMap() const
     QVariantMap variantMap = ViewPlugin::toVariantMap();
 
     variantMap["CurrentDimensionDatasetId"] = _currentDimensionDataset.isValid() ? _currentDimensionDataset.getDatasetId() : QString();
+    variantMap["GeneComparisonDatasetId"] = _geneComparisonDataset.isValid() ? _geneComparisonDataset.getDatasetId() : QString();
 
     for (auto action : _serializedActions)
     {
