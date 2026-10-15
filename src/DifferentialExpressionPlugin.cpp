@@ -945,7 +945,7 @@ void DifferentialExpressionPlugin::updateCurrentDimension(const std::vector<uint
 
 void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection&, const QItemSelection&)
 {
-    if (_tableItemModel->status() != TableModel::Status::UpToDate)
+    if (_updatingTableSelection || _tableItemModel->status() != TableModel::Status::UpToDate)
         return;
 
     std::vector<uint32_t> geneIndices;
@@ -975,7 +975,8 @@ void DifferentialExpressionPlugin::geneComparisonSelectionChanged()
 
     const auto& geneIndices = _geneComparisonDataset->getSelectionIndices();
     if (_tableItemModel->status() == TableModel::Status::UpToDate) {
-        const QSignalBlocker blocker(_tableView->selectionModel());
+
+        _updatingTableSelection = true;
         QItemSelection tableSelection;
         QModelIndex firstVisibleIndex;
         for (const auto geneIndex : geneIndices) {
@@ -991,10 +992,11 @@ void DifferentialExpressionPlugin::geneComparisonSelectionChanged()
                 firstVisibleIndex = proxyIndex;
         }
         _tableView->selectionModel()->select(tableSelection, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        _tableView->selectionModel()->setCurrentIndex(firstVisibleIndex, QItemSelectionModel::NoUpdate);
         if (firstVisibleIndex.isValid()) {
-            _tableView->selectionModel()->setCurrentIndex(firstVisibleIndex, QItemSelectionModel::NoUpdate);
             _tableView->scrollTo(firstVisibleIndex);
         }
+        _updatingTableSelection = false;
     }
 
     updateCurrentDimension(geneIndices);

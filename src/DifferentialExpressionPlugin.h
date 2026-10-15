@@ -123,6 +123,7 @@ protected:
 
     Dataset<Points>                         _currentDimensionDataset;
     bool                                    _updatingCurrentDimension = false;
+    bool                                    _updatingTableSelection = false;
     Dataset<Points>                         _geneComparisonDataset;      /** One point per gene, with independent selection */
     Dataset<Points>                         _maPlotDataset;              /** MA coordinates with the same gene selection */
 };
