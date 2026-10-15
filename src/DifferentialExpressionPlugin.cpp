@@ -899,12 +899,15 @@ void DifferentialExpressionPlugin::updateCurrentDimension(const std::vector<uint
         const bool singleGene = geneIndices.size() == 1;
         const QString dimensionName = singleGene ? _points->getDimensionNames()[geneIndices.front()] : QString("Mean expression (%1 genes)").arg(static_cast<qulonglong>(geneIndices.size()));
 
-        _selectedIdAction.setString(dimensionName);
-        _currentSelectedDimension.setCurrentDimensionIndex(singleGene ? static_cast<int>(geneIndices.front()) : -1);
+        if (singleGene) {
+            _selectedIdAction.setString(dimensionName);
+            _currentSelectedDimension.setCurrentDimensionName(dimensionName);
+        }
 
         std::vector<float> dimensionValues;
         if (singleGene) {
             _points->extractDataForDimension(dimensionValues, static_cast<int>(geneIndices.front()));
+
         }
         else {
             // Average the supplied values directly, including when they are already log-transformed.
