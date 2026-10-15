@@ -74,6 +74,7 @@ protected slots:
 
 protected:
     void updateGeneComparisonDataset(const std::vector<float>& values);
+    void updateMAPlotDataset(const std::vector<float>& values);
     void updateCurrentDimension(const std::vector<uint32_t>& dimensionIndices);
 
     using QLabelArray2 = std::array<QLabel, MultiTriggerAction::Size>;
@@ -121,7 +122,9 @@ protected:
     DecimalAction                           _thresholdExpressedAction; // threshold for % expressed
 
     Dataset<Points>                         _currentDimensionDataset;
+    bool                                    _updatingCurrentDimension = false;
     Dataset<Points>                         _geneComparisonDataset;      /** One point per gene, with independent selection */
+    Dataset<Points>                         _maPlotDataset;              /** MA coordinates with the same gene selection */
 };
 
 

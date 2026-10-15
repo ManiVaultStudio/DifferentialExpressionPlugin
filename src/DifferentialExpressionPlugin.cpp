@@ -802,6 +802,7 @@ void DifferentialExpressionPlugin::computeDE()
     }
     _tableItemModel->endModelBuilding();
     updateGeneComparisonDataset(geneComparisonValues);
+    updateMAPlotDataset(geneComparisonValues);
 }
 
 void DifferentialExpressionPlugin::updateGeneComparisonDataset(const std::vector<float>& values)
@@ -842,10 +843,47 @@ void DifferentialExpressionPlugin::updateGeneComparisonDataset(const std::vector
         geneComparisonSelectionChanged();
 }
 
+void DifferentialExpressionPlugin::updateMAPlotDataset(const std::vector<float>& values)
+{
+    if (!_geneComparisonDataset.isValid() || values.size() != _geneComparisonDataset->getNumPoints() * 2)
+        return;
+
+    if (_maPlotDataset.isValid() && _maPlotDataset->getNextSourceDataset<Points>() != _geneComparisonDataset)
+        _maPlotDataset.reset();
+
+    // Both datasets have one row per gene, so share the existing gene selection.
+    if (!_maPlotDataset.isValid())
+        _maPlotDataset = mv::data().createDerivedDataset<Points>("Gene comparison (MA-style)", _geneComparisonDataset, _points);
+
+    if (!_maPlotDataset.isValid())
+        return;
+
+    std::vector<float> maValues(values.size());
+    for (std::size_t geneIndex = 0; geneIndex < values.size() / 2; ++geneIndex) {
+        const double mean1 = values[2 * geneIndex];
+        const double mean2 = values[2 * geneIndex + 1];
+        // The input is already log-transformed; do not take another logarithm.
+        maValues[2 * geneIndex] = static_cast<float>((mean1 + mean2) / 2.0);
+        maValues[2 * geneIndex + 1] = static_cast<float>(mean1 - mean2);
+    }
+
+    _maPlotDataset->setData(maValues, 2);
+    _maPlotDataset->setDimensionNames({ "A: Mean log expression", "M: Difference (1 - 2)" });
+    _maPlotDataset->setProperty("GeneNames", _geneComparisonDataset->getProperty("GeneNames"));
+    _maPlotDataset->setProperty("SourceDatasetId", _points.getDatasetId());
+    _maPlotDataset->setProperty("SelectionSize1", _geneComparisonDataset->getProperty("SelectionSize1"));
+    _maPlotDataset->setProperty("SelectionSize2", _geneComparisonDataset->getProperty("SelectionSize2"));
+    _maPlotDataset->setProperty("ExpressionScale", "Log-transformed input; A = (mean 1 + mean 2) / 2; M = mean 1 - mean 2; log base unchanged");
+    events().notifyDatasetDataChanged(_maPlotDataset);
+}
+
 void DifferentialExpressionPlugin::updateCurrentDimension(const std::vector<uint32_t>& dimensionIndices)
 {
-    if (!_points.isValid() || dimensionIndices.empty())
+    if (!_points.isValid() || dimensionIndices.empty() || _updatingCurrentDimension)
         return;
+
+    // Prevents duplicate updates
+    _updatingCurrentDimension = true;
 
     try
     {
@@ -853,8 +891,10 @@ void DifferentialExpressionPlugin::updateCurrentDimension(const std::vector<uint
         geneIndices.erase(std::remove_if(geneIndices.begin(), geneIndices.end(), [this](uint32_t index) { return index >= _points->getNumDimensions(); }), geneIndices.end());
         std::sort(geneIndices.begin(), geneIndices.end());
         geneIndices.erase(std::unique(geneIndices.begin(), geneIndices.end()), geneIndices.end());
-        if (geneIndices.empty())
+        if (geneIndices.empty()) {
+            _updatingCurrentDimension = false;
             return;
+        }
 
         const bool singleGene = geneIndices.size() == 1;
         const QString dimensionName = singleGene ? _points->getDimensionNames()[geneIndices.front()] : QString("Mean expression (%1 genes)").arg(static_cast<qulonglong>(geneIndices.size()));
@@ -886,8 +926,10 @@ void DifferentialExpressionPlugin::updateCurrentDimension(const std::vector<uint
         if (!_currentDimensionDataset.isValid()) {
             _currentDimensionDataset = mv::data().createDerivedDataset<Points>("CurrentDimension in DiffView", _points);
         }
-        if (!_currentDimensionDataset.isValid())
+        if (!_currentDimensionDataset.isValid()) {
+            _updatingCurrentDimension = false;
             return;
+        }
 
         _currentDimensionDataset->setData(dimensionValues, 1);
         _currentDimensionDataset->setDimensionNames({ dimensionName });
@@ -897,6 +939,8 @@ void DifferentialExpressionPlugin::updateCurrentDimension(const std::vector<uint
     {
         qWarning() << "DifferentialExpressionPlugin: Failed to update current dimension";
     }
+
+    _updatingCurrentDimension = false;
 }
 
 void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection&, const QItemSelection&)
@@ -975,6 +1019,11 @@ void DifferentialExpressionPlugin::fromVariantMap(const QVariantMap& variantMap)
     if (!geneComparisonDatasetId.isEmpty())
         _geneComparisonDataset = mv::data().getDataset<Points>(geneComparisonDatasetId);
 
+    _maPlotDataset.reset();
+    const QString maPlotDatasetId = variantMap.value("MAPlotDatasetId").toString();
+    if (!maPlotDatasetId.isEmpty())
+        _maPlotDataset = mv::data().getDataset<Points>(maPlotDatasetId);
+
     for (auto action : _serializedActions)
     {
         if (variantMap.contains(action->getSerializationName()))
@@ -1012,6 +1061,7 @@ QVariantMap DifferentialExpressionPlugin::toVariantMap() const
 
     variantMap["CurrentDimensionDatasetId"] = _currentDimensionDataset.isValid() ? _currentDimensionDataset.getDatasetId() : QString();
     variantMap["GeneComparisonDatasetId"] = _geneComparisonDataset.isValid() ? _geneComparisonDataset.getDatasetId() : QString();
+    variantMap["MAPlotDatasetId"] = _maPlotDataset.isValid() ? _maPlotDataset.getDatasetId() : QString();
 
     for (auto action : _serializedActions)
     {
