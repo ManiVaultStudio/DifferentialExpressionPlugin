@@ -30,6 +30,7 @@
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 
@@ -118,7 +119,8 @@ namespace local
     // Keep the sample position while grouping the selection by physical row.
     using PhysicalRowSelection = std::vector<std::pair<std::uint64_t, std::size_t>>;
 
-    PhysicalRowSelection mapSelectedRows(const Points& points, const std::vector<std::uint64_t>& rows)
+    template <typename Rows>
+    PhysicalRowSelection mapSelectedRows(const Points& points, const Rows& rows)
     {
         const auto full = points.isFull();
         const auto rowCount = points.getNumPoints();
@@ -219,8 +221,8 @@ namespace local
         std::size_t _tilesRead = 0;
     };
 
-    template <typename FunctionObject>
-    void visitPackedRows(PackedTileReader& reader, const mv::pointdata::tiled::PointDataTiledStorage& storage, const PhysicalRowSelection& rows, std::size_t firstColumn, std::size_t columnCount, FunctionObject functionObject)
+    template <typename Rows, typename FunctionObject>
+    void visitPackedRows(PackedTileReader& reader, const mv::pointdata::tiled::PointDataTiledStorage& storage, const Rows& rows, std::size_t firstColumn, std::size_t columnCount, FunctionObject functionObject)
     {
         const auto tileHeight = storage.rowTileSize();
         const auto tileWidth = storage.columnTileSize();
@@ -228,9 +230,10 @@ namespace local
         const auto tileColumns = 1 + (storage.columns() - 1) / tileWidth;
         const auto columnOffset = firstColumn % tileWidth;
 
-        for (auto selected = rows.cbegin(); selected != rows.cend();)
+        const auto end = rows.end();
+        for (auto selected = rows.begin(); selected != end;)
         {
-            const auto tileRow = selected->first / tileHeight;
+            const auto tileRow = (*selected).first / tileHeight;
             const auto& descriptor = storage.descriptors().at(tileRow * tileColumns + tileColumn);
             if (columnOffset > descriptor.columns || columnCount > descriptor.columns - columnOffset)
                 throw std::out_of_range("Packed tile does not cover the selected columns");
@@ -246,7 +249,7 @@ namespace local
                 const auto offset = (rowInTile * descriptor.columns + columnOffset) * storage.elementSize();
                 functionObject(position, tile.constData() + offset);
                 ++selected;
-            } while (selected != rows.cend() && selected->first / tileHeight == tileRow);
+            } while (selected != end && (*selected).first / tileHeight == tileRow);
         }
     }
 
@@ -316,6 +319,68 @@ namespace local
         if (rowOffset != rowCount || columnOffset != 0)
             throw std::runtime_error("Incomplete point-data range");
     }
+
+    void readExpressionColumn(const Points& points, std::size_t column, std::span<float> values)
+    {
+        if (column >= points.getNumDimensions() || values.size() != points.getNumPoints())
+            throw std::out_of_range("Expression column request does not match the dataset");
+
+        if (values.empty())
+            return;
+
+        if (points.isProxy())
+        {
+            for (const auto& dataset : points.getProxyMembers())
+            {
+                const auto member = mv::Dataset<Points>(dataset);
+                if (!member.isValid() || member->getNumPoints() > values.size())
+                    throw std::runtime_error("Expression dataset proxy has an invalid member");
+
+                const auto count = static_cast<std::size_t>(member->getNumPoints());
+                readExpressionColumn(*member.get(), column, values.first(count));
+                values = values.subspan(count);
+            }
+            if (!values.empty())
+                throw std::runtime_error("Expression dataset proxy did not cover all rows");
+            return;
+        }
+
+        if (const auto* backend = getTiledBackend(points))
+        {
+            const auto storage = backend->getStorage();
+            if (storage)
+            {
+                PackedTileReader reader(*storage);
+                if (reader.isAvailable())
+                {
+                    const auto logicalRows = std::views::iota(std::uint64_t{0}, points.getNumPoints());
+                    const auto storeValue = [&](std::size_t row, const char* data) {
+                        values[row] = readValue(data, backend->getElementTypeIndex());
+                    };
+
+                    if (points.isFull())
+                    {
+                        const auto physicalRows = logicalRows | std::views::transform([](std::uint64_t row) {
+                            return std::pair{row, static_cast<std::size_t>(row)};
+                        });
+                        visitPackedRows(reader, *storage, physicalRows, column, 1, storeValue);
+                    }
+                    else
+                        visitPackedRows(reader, *storage, mapSelectedRows(points, logicalRows), column, 1, storeValue);
+
+                    return;
+                }
+            }
+        }
+
+        visitValues(values.size(), 1, [&](const PointDataAccessVisitor& visitor) {
+            points.visitColumns(column, 1, visitor);
+        }, [&](std::size_t row, std::size_t, float value) {
+            values[row] = value;
+        });
+    }
+
+    constexpr auto expressionOwnerProperty = "DifferentialExpressionPlugin.ExpressionOwner";
 
 }
 
@@ -489,6 +554,7 @@ void DifferentialExpressionPlugin::init()
         _tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
         _tableView->setContextMenuPolicy(Qt::ActionsContextMenu);
 
+        connect(_tableView, &QAbstractItemView::clicked, this, &DifferentialExpressionPlugin::tableView_clicked);
         connect(_tableView->selectionModel(), &QItemSelectionModel::selectionChanged, this, &DifferentialExpressionPlugin::tableView_selectionChanged);
 
         WordWrapHeaderView* horizontalHeader = new WordWrapHeaderView(Qt::Horizontal, _tableView, true);
@@ -1173,26 +1239,80 @@ void DifferentialExpressionPlugin::computeDE()
 
 void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
 {
-    if (_tableItemModel->status() != TableModel::Status::UpToDate)
+    if (!index.isValid() || !_points.isValid() || _tableItemModel->status() != TableModel::Status::UpToDate)
+        return;
+
+    const auto sourceIndex = _sortFilterProxyModel->mapToSource(index);
+    if (!sourceIndex.isValid())
+        return;
+
+    const auto dimension = static_cast<std::size_t>(sourceIndex.row());
+    const auto& dimensionNames = _points->getDimensionNames();
+    if (dimension >= dimensionNames.size())
         return;
 
     try
     {
-        const QModelIndex firstColumn = index.sibling(index.row(), 0);
-        const QString dimensionName = firstColumn.data().toString();
+        const auto dimensionName = dimensionNames[dimension];
+        std::vector<float> expression(_points->getNumPoints());
+        local::readExpressionColumn(*_points.get(), dimension, expression);
 
-        _selectedIdAction.setString(dimensionName);
-        _currentSelectedDimension.setCurrentDimensionName(dimensionName);
+        Dataset<Points> output;
+        const auto owner = getId();
+        for (const auto& child : _points->getChildren({PointType}, false))
+        {
+            if (!child.isValid() || child->getDataType() != PointType)
+                continue;
+
+            const auto points = Dataset<Points>(child);
+            if (points->isFull() && !points->isProxy() &&
+                points->getNextSourceDataset<Points>() == _points &&
+                points->getProperty(local::expressionOwnerProperty).toString() == owner)
+            {
+                output = points;
+                break;
+            }
+        }
+
+        const bool created = !output.isValid();
+        if (created)
+        {
+            output = mv::data().createDerivedDataset<Points>(QStringLiteral("Selected gene expression"), _points, _points, false);
+            if (!output.isValid())
+                throw std::runtime_error("Unable to create the selected gene expression dataset");
+
+            output->setProperty(local::expressionOwnerProperty, owner);
+        }
+
+        output->setData(std::move(expression), 1);
+        output->setDimensionNames({dimensionName});
+        if (created)
+            events().notifyDatasetAdded(output);
+        events().notifyDatasetDataChanged(output);
     }
-    catch (...) // catch everything
+    catch (const std::exception& exception)
     {
-        qDebug() << "DifferentialExpressionPlugin::tableView_clicked -> something went wrong :(";
+        QMessageBox::warning(&getWidget(), tr("Selected gene expression"),
+            tr("Unable to update the expression dataset: %1").arg(QString::fromUtf8(exception.what())));
     }
 }
 
-void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection& selected, const QItemSelection& deselected)
+void DifferentialExpressionPlugin::tableView_selectionChanged(const QItemSelection& selected, const QItemSelection&)
 {
-    tableView_clicked(selected.indexes().first());
+    if (_tableItemModel->status() != TableModel::Status::UpToDate)
+        return;
+
+    const auto indexes = selected.indexes();
+    if (indexes.isEmpty())
+        return;
+
+    const auto sourceIndex = _sortFilterProxyModel->mapToSource(indexes.front());
+    if (!sourceIndex.isValid())
+        return;
+
+    const auto dimensionName = sourceIndex.siblingAtColumn(0).data().toString();
+    _selectedIdAction.setString(dimensionName);
+    _currentSelectedDimension.setCurrentDimensionIndex(sourceIndex.row());
 }
 
 /******************************************************************************
