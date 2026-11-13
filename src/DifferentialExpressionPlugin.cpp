@@ -1,12 +1,23 @@
 #include "DifferentialExpressionPlugin.h"
 
+#include <AbstractProjectManager.h>
+#include <Application.h>
 #include <DatasetsMimeData.h>
+#include <PointData/storage/tiled/TiledPointsStorageBackend.h>
+#include <util/BlobCodec.h>
+#include <util/CodecRegistry.h>
+#include <util/Serialization.h>
 
 #include <QDebug>
+#include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QTemporaryFile>
 
 #include "AdditionalSettings.h"
 #include "WordWrapHeaderView.h"
@@ -14,7 +25,13 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstring>
+#include <iterator>
 #include <limits>
+#include <numeric>
+#include <optional>
+#include <span>
+#include <stdexcept>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
@@ -62,40 +79,242 @@ namespace local
             return T();
         }
     }
-    template <typename FunctionObject>
-    void visitAllElements(Dataset<Points>& points, FunctionObject functionObject)
+    constexpr std::size_t defaultColumnBlockSize = 32;
+    constexpr std::size_t medianSampleBudgetBytes = 128 * 1024 * 1024;
+    constexpr std::size_t parallelSampleThreshold = 64 * 1024;
+
+    const mv::pointdata::storage::TiledPointsStorageBackend* getTiledBackend(const Points& points)
     {
-        const auto numDimensions = points->getNumDimensions();
-        const auto numRows = points->getNumPoints();
-        points->visitData([numRows, numDimensions, functionObject](auto data)
-            {
-                for (std::size_t r = 0; r < numRows; ++r)
-                {
-                    for (std::size_t column = 0; column < numDimensions; ++column)
-                    {
-                        const auto value = data[r][column];
-                        functionObject(r, column, value);
-                    }
-                }
-            });
+        return dynamic_cast<const mv::pointdata::storage::TiledPointsStorageBackend*>(points.getStorageBackend());
     }
-    template <typename RowRange, typename FunctionObject>
-    void visitElements(Dataset<Points>& points, const RowRange& rows, FunctionObject functionObject)
+
+    template <typename T>
+    float readValue(const char* bytes)
     {
-        const auto numDimensions = points->getNumDimensions();
-        points->visitData([&rows, numDimensions, functionObject](auto data)
+        T value;
+        std::memcpy(&value, bytes, sizeof(T));
+        return static_cast<float>(value);
+    }
+
+    float readValue(const char* bytes, std::uint32_t type)
+    {
+        using ElementType = PointData::ElementTypeSpecifier;
+
+        switch (static_cast<ElementType>(type))
+        {
+            case ElementType::float32:  return readValue<float>(bytes);
+            case ElementType::bfloat16: return readValue<biovault::bfloat16_t>(bytes);
+            case ElementType::int32:    return readValue<std::int32_t>(bytes);
+            case ElementType::uint32:   return readValue<std::uint32_t>(bytes);
+            case ElementType::int16:    return readValue<std::int16_t>(bytes);
+            case ElementType::uint16:   return readValue<std::uint16_t>(bytes);
+            case ElementType::int8:     return readValue<std::int8_t>(bytes);
+            case ElementType::uint8:    return readValue<std::uint8_t>(bytes);
+        }
+
+        throw std::runtime_error("Unsupported point-data element type");
+    }
+
+    // Keep the sample position while grouping the selection by physical row.
+    using PhysicalRowSelection = std::vector<std::pair<std::uint64_t, std::size_t>>;
+
+    PhysicalRowSelection mapSelectedRows(const Points& points, const std::vector<std::uint64_t>& rows)
+    {
+        const auto full = points.isFull();
+        const auto rowCount = points.getNumPoints();
+        PhysicalRowSelection physicalRows;
+        physicalRows.reserve(rows.size());
+
+        for (std::size_t position = 0; position < rows.size(); ++position)
+        {
+            const auto row = rows[position];
+            if (row >= rowCount)
+                throw std::out_of_range("Selected point row is out of bounds");
+
+            const auto physicalRow = full ? row : points.indices.at(static_cast<std::size_t>(row));
+            physicalRows.emplace_back(physicalRow, position);
+        }
+
+        if (!full)
+            std::sort(physicalRows.begin(), physicalRows.end());
+
+        return physicalRows;
+    }
+
+    std::size_t countSelectedTileRows(const PhysicalRowSelection& rows, std::size_t tileHeight)
+    {
+        std::size_t count = 0;
+        auto previous = std::numeric_limits<std::uint64_t>::max();
+        for (const auto& row : rows)
+        {
+            const auto tileRow = row.first / tileHeight;
+            if (tileRow != previous)
             {
-                const size_t numRows = rows.size();
-                for (std::size_t localRow = 0; localRow < numRows; ++localRow)
+                ++count;
+                previous = tileRow;
+            }
+        }
+        return count;
+    }
+
+    class PackedTileReader
+    {
+    public:
+        explicit PackedTileReader(const mv::pointdata::tiled::PointDataTiledStorage& storage) : _storage(storage)
+        {
+            if (!_storage.hasPackedTileSource())
+                return;
+
+            _codec = mv::util::codecRegistry().createCodec(nullptr, _storage.packedTileSourceCodec());
+            if (!_codec)
+                return;
+
+            const auto type = _codec->getType();
+            for (const auto& path : _storage.packedTileSourcePaths())
+            {
+                const QFileInfo file(path);
+                if (file.isAbsolute() && !file.isFile())
+                    return;
+
+                // These Core codecs can resolve relative project archive entries.
+                if (!file.isAbsolute() && (!mv::projects().getCurrentProject() ||
+                    (type != mv::util::BlobCodec::Type::Zstd && type != mv::util::BlobCodec::Type::None)))
+                    return;
+            }
+
+            _readers.resize(_storage.packedTileSourcePaths().size());
+        }
+
+        bool isAvailable() const { return !_readers.empty(); }
+        std::size_t tilesRead() const { return _tilesRead; }
+
+        QByteArray read(const mv::pointdata::tiled::TileDescriptor& descriptor)
+        {
+            auto& reader = _readers.at(descriptor.superTileIndex);
+            if (!reader)
+            {
+                const auto& source = _storage.packedTileSourcePaths().at(descriptor.superTileIndex);
+                auto path = source;
+                if (!QFileInfo(source).isAbsolute())
                 {
-                    const auto globalRow = rows[localRow];
-                    for (std::size_t column = 0; column < numDimensions; ++column)
-                    {
-                        const auto value = data[globalRow][column];
-                        functionObject(globalRow, localRow, column, value);
-                    }
+                    const auto stagedPath = mv::projects().resolveStagedProjectResourcePath(source);
+                    if (!stagedPath.isEmpty())
+                        path = stagedPath;
                 }
-            });
+                reader = std::make_unique<mv::util::PackedBlobFileReader>(path, _codec);
+            }
+
+            auto bytes = reader->read(descriptor.packedBlock);
+            if (static_cast<std::uint64_t>(bytes.size()) != descriptor.rows * descriptor.columns * _storage.elementSize())
+                throw std::runtime_error("Packed point-data tile has an unexpected size");
+
+            ++_tilesRead;
+            return bytes;
+        }
+
+    private:
+        const mv::pointdata::tiled::PointDataTiledStorage& _storage;
+        mv::util::SharedCodec _codec;
+        std::vector<std::unique_ptr<mv::util::PackedBlobFileReader>> _readers;
+        std::size_t _tilesRead = 0;
+    };
+
+    template <typename FunctionObject>
+    void visitPackedRows(PackedTileReader& reader, const mv::pointdata::tiled::PointDataTiledStorage& storage, const PhysicalRowSelection& rows, std::size_t firstColumn, std::size_t columnCount, FunctionObject functionObject)
+    {
+        const auto tileHeight = storage.rowTileSize();
+        const auto tileWidth = storage.columnTileSize();
+        const auto tileColumn = firstColumn / tileWidth;
+        const auto tileColumns = 1 + (storage.columns() - 1) / tileWidth;
+        const auto columnOffset = firstColumn % tileWidth;
+
+        for (auto selected = rows.cbegin(); selected != rows.cend();)
+        {
+            const auto tileRow = selected->first / tileHeight;
+            const auto& descriptor = storage.descriptors().at(tileRow * tileColumns + tileColumn);
+            if (columnOffset > descriptor.columns || columnCount > descriptor.columns - columnOffset)
+                throw std::out_of_range("Packed tile does not cover the selected columns");
+
+            const auto tile = reader.read(descriptor);
+            do
+            {
+                const auto [physicalRow, position] = *selected;
+                const auto rowInTile = physicalRow % tileHeight;
+                if (rowInTile >= descriptor.rows)
+                    throw std::out_of_range("Packed tile does not cover the selected row");
+
+                const auto offset = (rowInTile * descriptor.columns + columnOffset) * storage.elementSize();
+                functionObject(position, tile.constData() + offset);
+                ++selected;
+            } while (selected != rows.cend() && selected->first / tileHeight == tileRow);
+        }
+    }
+
+    // Stage just the selected values for one physical column tile in sample order.
+    void stagePackedSamples(QFile& file, PackedTileReader& reader, const mv::pointdata::tiled::PointDataTiledStorage& storage, const PhysicalRowSelection& rows, std::size_t firstColumn, std::size_t columnCount)
+    {
+        const auto rowBytes = static_cast<qint64>(columnCount * storage.elementSize());
+        if (rows.size() > static_cast<std::uint64_t>(std::numeric_limits<qint64>::max() / rowBytes))
+            throw std::overflow_error("Differential expression samples exceed the temporary file size limit");
+
+        visitPackedRows(reader, storage, rows, firstColumn, columnCount, [&](std::size_t position, const char* data) {
+            if (!file.seek(static_cast<qint64>(position) * rowBytes) || file.write(data, rowBytes) != rowBytes)
+                throw std::runtime_error("Unable to write differential expression samples to the temporary file");
+        });
+
+        if (!file.flush())
+            throw std::runtime_error("Unable to flush the differential expression sample file");
+    }
+
+    template <typename FunctionObject>
+    void visitStagedSamples(QFile& file, std::size_t rowCount, std::size_t rowWidth, std::size_t firstColumn, std::size_t columnCount, std::size_t elementSize, std::uint32_t type, FunctionObject functionObject)
+    {
+        const auto rowBytes = static_cast<qint64>(rowWidth * elementSize);
+        const auto blockBytes = static_cast<qint64>(columnCount * elementSize);
+        QByteArray buffer(blockBytes, Qt::Uninitialized);
+        for (std::size_t row = 0; row < rowCount; ++row)
+        {
+            const auto offset = static_cast<qint64>(row) * rowBytes + static_cast<qint64>(firstColumn * elementSize);
+            if (!file.seek(offset) || file.read(buffer.data(), blockBytes) != blockBytes)
+                throw std::runtime_error("Unable to read differential expression samples from the temporary file");
+
+            for (std::size_t column = 0; column < columnCount; ++column)
+                functionObject(row, column, readValue(buffer.constData() + column * elementSize, type));
+        }
+    }
+
+    template <typename Request, typename FunctionObject>
+    void visitValues(std::size_t rowCount, std::size_t columnCount, Request request, FunctionObject functionObject)
+    {
+        std::size_t rowOffset = 0;
+        std::size_t columnOffset = 0;
+
+        request([&](const PointDataAccessView& view) {
+            // A tiled read can deliver a row in several column segments.
+            if (!view || view.rows > rowCount - rowOffset || view.columns > columnCount - columnOffset ||
+                (view.rows > 1 && view.columns != columnCount))
+                throw std::runtime_error("Unexpected point-data range shape");
+
+            for (std::size_t row = 0; row < view.rows; ++row)
+            {
+                const auto* rowData = view.rowData(row);
+                for (std::size_t column = 0; column < view.columns; ++column)
+                {
+                    const auto value = readValue(rowData + column * view.elementSizeBytes, view.elementTypeIndex);
+                    functionObject(rowOffset + row, columnOffset + column, value);
+                }
+            }
+
+            columnOffset += view.columns;
+            if (columnOffset == columnCount)
+            {
+                columnOffset = 0;
+                rowOffset += view.rows;
+            }
+        });
+
+        if (rowOffset != rowCount || columnOffset != 0)
+            throw std::runtime_error("Incomplete point-data range");
     }
 
 }
@@ -402,7 +621,7 @@ void DifferentialExpressionPlugin::init()
         _selectedCellsLabel[i].setAlignment(Qt::AlignHCenter);
     }
 
-    auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, const QString& selectionName, QLabel& label) {
+    auto updateSelectionIndices = [this](std::vector<uint32_t>& selection, std::vector<std::uint64_t>& rows, const QString& selectionName, QLabel& label) {
         if (!_points.isValid())
             return;
 
@@ -417,7 +636,18 @@ void DifferentialExpressionPlugin::init()
 
         sortAndUnique(selection);
 
-        label.setText(QString("(%1 items)").arg(selection.size()));
+        if (_points->isProxy() || (_points->isFull() && !_points->isDerivedData()))
+        {
+            rows.assign(selection.begin(), selection.end());
+        }
+        else
+        {
+            std::vector<std::uint32_t> localRows;
+            _points->getLocalSelectionIndices(localRows);
+            rows.assign(localRows.begin(), localRows.end());
+        }
+
+        label.setText(QString("(%1 items)").arg(rows.size()));
 
         const auto otherData     = _additionalSettingsDialog.getSelectionMappingSourcePicker().getCurrentDataset<Points>();
         auto& otherDataSelection = _additionalSettingsDialog.getSelection(selectionName);
@@ -426,7 +656,7 @@ void DifferentialExpressionPlugin::init()
 
         qDebug() << "DifferentialExpressionPlugin: Saved selection " << selectionName << " with " << selection.size() << " items.";
 
-        if (_selectionA.size() != 0 && _selectionB.size() != 0)
+        if (!_selectionRowsA.empty() && !_selectionRowsB.empty())
             _buttonProgressBar->showStatus(TableModel::Status::OutDated);
 
         };
@@ -455,11 +685,11 @@ void DifferentialExpressionPlugin::init()
         };
 
     connect(_setSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, updateSelectionIndices](){
-            updateSelectionIndices(_selectionA, "A", _selectedCellsLabel[0]);
+            updateSelectionIndices(_selectionA, _selectionRowsA, "A", _selectedCellsLabel[0]);
         });
 
     connect(_setSelectionTriggerActions.getTriggerAction(1), &TriggerAction::triggered, [this, updateSelectionIndices](){
-            updateSelectionIndices(_selectionB, "B", _selectedCellsLabel[1]);
+            updateSelectionIndices(_selectionB, _selectionRowsB, "B", _selectedCellsLabel[1]);
         });
 
     connect(_highlightSelectionTriggerActions.getTriggerAction(0), &TriggerAction::triggered, [this, highlightSelectionIndices](){
@@ -505,89 +735,90 @@ void DifferentialExpressionPlugin::setPositionDataset(const mv::Dataset<Points>&
 
 void DifferentialExpressionPlugin::positionDatasetChanged()
 {
-    // Do not show the drop indicator if there is a valid point positions dataset
     _dropWidget->setShowDropIndicator(!_points.isValid());
 
-    // Compute normalization
-    const auto numDimensions    = _points->getNumDimensions();
-    const auto numPoints        = _points->getNumPoints();
+    _selectionA.clear();
+    _selectionB.clear();
+    _selectionRowsA.clear();
+    _selectionRowsB.clear();
+    _additionalSettingsDialog.getSelectionA().clear();
+    _additionalSettingsDialog.getSelectionB().clear();
 
-    // check if min and max need to be recomputed or are stored
-    // first check if there are dimension statistics stored in the properties and if they contain min and max values
-    QVariantMap dimensionStatisticsMap = _points->getProperty("Dimension Statistics").toMap();
-    bool recompute = dimensionStatisticsMap.empty();
-    recompute |= (dimensionStatisticsMap.constFind("min") == dimensionStatisticsMap.constEnd());
-    recompute |= (dimensionStatisticsMap.constFind("max") == dimensionStatisticsMap.constEnd());
+    for (auto& label : _selectedCellsLabel)
+        label.setText(QStringLiteral("(0 items)"));
 
-    if (recompute)
+    _tableItemModel->setStatus(TableModel::Status::Undefined);
+}
+
+void DifferentialExpressionPlugin::updateNormalization()
+{
+    const auto numDimensions = static_cast<std::size_t>(_points->getNumDimensions());
+    const auto numPoints = _points->getNumPoints();
+    auto dimensionStatistics = _points->getProperty("Dimension Statistics").toMap();
+    const auto cachedMin = dimensionStatistics.value("min").toList();
+    const auto cachedMax = dimensionStatistics.value("max").toList();
+
+    if (cachedMin.size() == numDimensions && cachedMax.size() == numDimensions)
     {
-        qDebug() << "DifferentialExpressionPlugin: Computing dimension ranges";
-        _minValues.resize(numDimensions, std::numeric_limits<float>::max());
-        _rescaleValues.resize(numDimensions, std::numeric_limits<float>::lowest());
-
-        std::vector<std::size_t> count(numDimensions, 0);
-
-        local::visitAllElements(_points, [this, &count](auto row, auto column, auto value)->void
-            {
-                if (value > _rescaleValues[column])
-                    _rescaleValues[column] = value;
-                if (value < _minValues[column])
-                    _minValues[column] = value;
-                count[column]++;
-            });
-
-        // check for potential 0 values and add them to the min and max range if needed
-#pragma omp parallel for schedule(dynamic,1)
-        for (std::ptrdiff_t d = 0; d < numDimensions; d++)
+        _minValues.resize(numDimensions);
+        _rescaleValues.resize(numDimensions);
+        for (std::size_t column = 0; column < numDimensions; ++column)
         {
-            if (count[d] < numPoints)
-            {
-                if (_minValues[d] > 0)
-                    _minValues[d] = 0;
-                if (_rescaleValues[d] < 0)
-                    _minValues[d] = 0;
-            }
+            _minValues[column] = cachedMin[column].toFloat();
+            _rescaleValues[column] = cachedMax[column].toFloat();
         }
-
-        // store min and max values in the properties
-        dimensionStatisticsMap["min"] = QVariantList(_minValues.cbegin(), _minValues.cend());
-        dimensionStatisticsMap["max"] = QVariantList(_rescaleValues.cbegin(), _rescaleValues.cend());
-        _points->setProperty("Dimension Statistics", dimensionStatisticsMap);
     }
     else
     {
-        const QVariantList minList = dimensionStatisticsMap["min"].toList();
-        const QVariantList maxList = dimensionStatisticsMap["max"].toList();
-        recompute |= (minList.size() != numDimensions);
-        recompute |= (maxList.size() != numDimensions);
-        if (!recompute)
+        _minValues.assign(numDimensions, std::numeric_limits<float>::max());
+        _rescaleValues.assign(numDimensions, std::numeric_limits<float>::lowest());
+
+        const auto* tiledBackend = local::getTiledBackend(*_points.get());
+        const auto tiledStorage = tiledBackend ? tiledBackend->getStorage() : nullptr;
+        const auto columnBlockSize = tiledStorage ? tiledStorage->columnTileSize() : local::defaultColumnBlockSize;
+        const auto rowBlockSize = tiledStorage ? tiledStorage->rowTileSize() : numPoints;
+        std::optional<local::PackedTileReader> packedReader;
+        if (tiledStorage && _points->isFull())
+            packedReader.emplace(*tiledStorage);
+
+        for (std::uint64_t firstRow = 0; firstRow < numPoints; firstRow += rowBlockSize)
         {
-            qDebug() << "DifferentialExpressionPlugin: Loading dimension ranges";
-            // load them from properties
-            _minValues.resize(numDimensions);
-            _rescaleValues.resize(numDimensions);
-#pragma  omp parallel for
-            for (std::ptrdiff_t i = 0; i < numDimensions; ++i)
+            const auto rowCount = std::min<std::uint64_t>(rowBlockSize, numPoints - firstRow);
+
+            for (std::size_t firstColumn = 0; firstColumn < numDimensions; firstColumn += columnBlockSize)
             {
-                _minValues[i]        = minList[i].toFloat();
-                _rescaleValues[i]    = maxList[i].toFloat();
+                const auto columnCount = std::min(columnBlockSize, numDimensions - firstColumn);
+                local::visitValues(rowCount, columnCount, [&](const PointDataAccessVisitor& visitor) {
+                    if (packedReader && packedReader->isAvailable())
+                    {
+                        const auto tileColumns = 1 + (numDimensions - 1) / columnBlockSize;
+                        const auto tileIndex = (firstRow / rowBlockSize) * tileColumns + firstColumn / columnBlockSize;
+                        const auto& descriptor = tiledStorage->descriptors().at(tileIndex);
+                        const auto bytes = packedReader->read(descriptor);
+                        const auto elementSize = static_cast<std::uint32_t>(tiledStorage->elementSize());
+                        visitor({bytes.constData(), descriptor.rows, descriptor.columns, descriptor.columns * elementSize,
+                                 tiledBackend->getElementTypeIndex(), elementSize, {}});
+                    }
+                    else
+                        _points->visitRange(firstRow, rowCount, firstColumn, columnCount, visitor);
+                }, [&](std::size_t, std::size_t column, float value) {
+                    const auto dimension = firstColumn + column;
+                    _minValues[dimension] = std::min(_minValues[dimension], value);
+                    _rescaleValues[dimension] = std::max(_rescaleValues[dimension], value);
+                });
             }
-
         }
+
+        dimensionStatistics["min"] = QVariantList(_minValues.cbegin(), _minValues.cend());
+        dimensionStatistics["max"] = QVariantList(_rescaleValues.cbegin(), _rescaleValues.cend());
+        _points->setProperty("Dimension Statistics", dimensionStatistics);
     }
 
-    // Compute rescale values
-#pragma omp parallel for schedule(dynamic,1)
-    for (std::ptrdiff_t d = 0; d < numDimensions; d++)
+    for (std::size_t column = 0; column < numDimensions; ++column)
     {
-        const float diff = (_rescaleValues[d] - _minValues[d]);
-        if (std::fabs(diff) > 1e-6f)
-            _rescaleValues[d] = 1.0f / diff;
-        else
-            _rescaleValues[d] = 1.0f;
+        const float diff = _rescaleValues[column] - _minValues[column];
+        _rescaleValues[column] = std::fabs(diff) > 1e-6f ? 1.0f / diff : 1.0f;
     }
-
-    qDebug() << "DifferentialExpressionPlugin: Loaded " << numDimensions << " dimensions for " << numPoints << " points";
 }
 
 void DifferentialExpressionPlugin::writeToCSV() const
@@ -633,26 +864,24 @@ void DifferentialExpressionPlugin::computeDE()
 
     _tableItemModel->invalidate();
 
-    const std::ptrdiff_t numDimensions = _points->getNumDimensions();
-    const size_t selectionSizeA = _selectionA.size();
-    const size_t selectionSizeB = _selectionB.size();
+    const auto numDimensions = static_cast<std::size_t>(_points->getNumDimensions());
+    const auto selectionSizeA = _selectionRowsA.size();
+    const auto selectionSizeB = _selectionRowsB.size();
 
-    if (selectionSizeA == 0 || selectionSizeB == 0)
+    if (numDimensions == 0 || selectionSizeA == 0 || selectionSizeB == 0)
         return;
 
-    qDebug() << "DifferentialExpressionPlugin: Computing differential expression.";
+    QElapsedTimer elapsed;
+    elapsed.start();
+    qint64 normalizationNs = 0;
+    qint64 selectionReadNs = 0;
 
     // Determine dynamic column counts based on the toggle
     _totalTableColumns = _useAdditionalCalculations ? 10 : 6;
 
-    // for mean, sum all values and divide by size later
     std::vector<float> meansA(numDimensions, 0);
     std::vector<float> meansB(numDimensions, 0);
 
-    // for median, collect per dimension values and sprt later
-    // TODO: maybe look for median dynamically, instead of store the vectors
-    std::vector<std::vector<float>> valuesA(numDimensions, std::vector<float>(selectionSizeA, 0));
-    std::vector<std::vector<float>> valuesB(numDimensions, std::vector<float>(selectionSizeB, 0));
     std::vector<float> mediansA(numDimensions, 0);
     std::vector<float> mediansB(numDimensions, 0);
 
@@ -662,42 +891,18 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> SDB(numDimensions, 0);
 
     // for percentage expressed
-    std::vector<std::size_t> countExpressedA(numDimensions, 0);
-    std::vector<std::size_t> countExpressedB(numDimensions, 0);
     std::vector<float> pctExpressedA(numDimensions, 0);
     std::vector<float> pctExpressedB(numDimensions, 0);
 
-    float thr = _thresholdExpressedAction.getValue();
+    const float thr = _thresholdExpressedAction.getValue();
 
-    // only computes extra stats if _useAdditionalCalculations is true
-    auto computeAvgHelper = [this](const std::vector<uint32_t>& selectionIDs, const float thr, std::vector<float>& means, std::vector<std::vector<float>>& valCopies, std::vector<std::size_t>& countExpressed) -> void {
-        local::visitElements(_points, selectionIDs, [&means, &valCopies, &countExpressed, thr, this](auto globalRowID, auto localRowID, auto column, auto value)
-            {
-                means[column] += value;
-                valCopies[column][localRowID] = value;// for median and SD
-
-                // count %expressed based on loaded values
-                /*if (_useAdditionalCalculations && value > thr) {
-                    countExpressed[column]++;
-                }*/
-
-                // count %expressed based on norm or not
-                if (_useAdditionalCalculations) {
-                    const float thresholdValue = _norm ? (value - _minValues[column]) * _rescaleValues[column] : value;
-                    if (thresholdValue > thr) {
-                        countExpressed[column]++;
-                    }
-                }
-            });
-        };
-
-    auto computeMedian = [](std::vector<float>& vec) -> float {
+    auto computeMedian = [](std::span<float> vec) -> float {
         std::nth_element(vec.begin(), vec.begin() + vec.size() / 2, vec.end());
         return vec[vec.size() / 2];
         };
 
     // sample standard deviation
-    auto computeSD = [](const std::vector<float>& vec, float mean) -> float {
+    auto computeSD = [](std::span<const float> vec, float mean) -> float {
         if (vec.size() < 2) 
             return 0.0f;
 
@@ -714,40 +919,209 @@ void DifferentialExpressionPlugin::computeDE()
         return (avgs[dim] - _minValues[dim]) * _rescaleValues[dim];
         };
 
-    // first compute the sum of values per dimension for _selectionA and _selectionB
-    // and copy the respective expresion values for median computation (requires sorting)
-    computeAvgHelper(_selectionA, thr, meansA, valuesA, countExpressedA);
-    computeAvgHelper(_selectionB, thr, meansB, valuesB, countExpressedB);
-
-#pragma omp parallel for schedule(dynamic,1)
-    for (std::ptrdiff_t d = 0; d < numDimensions; d++)
+    try
     {
-        meansA[d] /= selectionSizeA;
-        meansB[d] /= selectionSizeB;
-        mediansA[d] = computeMedian(valuesA[d]);
-        mediansB[d] = computeMedian(valuesB[d]);
-
-        if (_useAdditionalCalculations) {
-            SDA[d] = computeSD(valuesA[d], meansA[d]);
-            SDB[d] = computeSD(valuesB[d], meansB[d]);
-            pctExpressedA[d] = 100.0f * countExpressedA[d] / static_cast<float>(selectionSizeA);
-            pctExpressedB[d] = 100.0f * countExpressedB[d] / static_cast<float>(selectionSizeB);
+        if (_norm)
+        {
+            updateNormalization();
+            normalizationNs = elapsed.nsecsElapsed();
         }
 
-        // Optional normalization
-        if (_norm) {
-            meansA[d] = normAvg(meansA, d);
-            meansB[d] = normAvg(meansB, d);
-            mediansA[d] = normAvg(mediansA, d);
-            mediansB[d] = normAvg(mediansB, d);
+        // Read rows shared by both groups only once.
+        std::vector<std::uint64_t> selectedRows;
+        selectedRows.reserve(selectionSizeA + selectionSizeB);
+        std::set_union(_selectionRowsA.begin(), _selectionRowsA.end(), _selectionRowsB.begin(), _selectionRowsB.end(), std::back_inserter(selectedRows));
 
-            if (_useAdditionalCalculations) {
-                SDA[d] = SDA[d] * _rescaleValues[d];
-                SDB[d] = SDB[d] * _rescaleValues[d];
+        std::vector<std::pair<std::size_t, std::size_t>> sampleIndices;
+        sampleIndices.reserve(selectedRows.size());
+        std::size_t nextA = 0;
+        std::size_t nextB = 0;
+        for (const auto row : selectedRows)
+        {
+            const auto sampleA = nextA < selectionSizeA && _selectionRowsA[nextA] == row ? nextA++ : selectionSizeA;
+            const auto sampleB = nextB < selectionSizeB && _selectionRowsB[nextB] == row ? nextB++ : selectionSizeB;
+            sampleIndices.emplace_back(sampleA, sampleB);
+        }
+
+        const auto* tiledBackend = local::getTiledBackend(*_points.get());
+        const auto tiledStorage = tiledBackend ? tiledBackend->getStorage() : nullptr;
+        const auto tileWidth = tiledStorage ? tiledStorage->columnTileSize() : local::defaultColumnBlockSize;
+        const bool sameSelection = _selectionRowsA == _selectionRowsB;
+        const auto samplesPerColumn = sameSelection ? selectionSizeA : selectionSizeA + selectionSizeB;
+        const auto maxColumnsByMemory = std::max<std::size_t>(1, local::medianSampleBudgetBytes / sizeof(float) / samplesPerColumn);
+        const auto maxBlockWidth = std::min(tileWidth, maxColumnsByMemory);
+        const auto physicalRows = tiledStorage ? local::mapSelectedRows(*_points.get(), selectedRows) : local::PhysicalRowSelection{};
+        const auto selectedTileRows = tiledStorage ? local::countSelectedTileRows(physicalRows, tiledStorage->rowTileSize()) : 0;
+
+        std::optional<local::PackedTileReader> packedReader;
+        if (tiledStorage)
+        {
+            packedReader.emplace(*tiledStorage);
+            if (!packedReader->isAvailable())
+                packedReader.reset();
+        }
+
+        QTemporaryFile stagedSamples;
+        qint64 sampleStagingNs = 0;
+
+        const auto hitsBefore = tiledStorage ? tiledStorage->cacheHits() : 0;
+        const auto missesBefore = tiledStorage ? tiledStorage->cacheMisses() : 0;
+        const auto evictionsBefore = tiledStorage ? tiledStorage->cacheEvictions() : 0;
+        const auto residentBytesBefore = tiledStorage ? tiledStorage->cacheSizeInBytes() : 0;
+        const auto fileRangeBefore = mv::util::BlobCodec::getFileRangeTelemetry();
+        std::size_t columnBlocks = 0;
+
+        for (std::size_t firstColumn = 0; firstColumn < numDimensions;)
+        {
+            // Finish one physical column tile before moving to the next.
+            const auto columnOffset = firstColumn % tileWidth;
+            const auto tileFirstColumn = firstColumn - columnOffset;
+            const auto tileColumnCount = std::min(tileWidth, numDimensions - tileFirstColumn);
+            const auto columnCount = std::min(tileColumnCount - columnOffset, maxBlockWidth);
+            const bool stageTile = packedReader && tileColumnCount > maxBlockWidth;
+            std::vector<float> valuesA(columnCount * selectionSizeA);
+            std::vector<float> valuesB(sameSelection ? 0 : columnCount * selectionSizeB);
+
+            const auto storeSample = [&](std::size_t row, std::size_t column, float value) {
+                const auto [sampleA, sampleB] = sampleIndices[row];
+                if (sampleA != selectionSizeA)
+                    valuesA[column * selectionSizeA + sampleA] = value;
+                if (!sameSelection && sampleB != selectionSizeB)
+                    valuesB[column * selectionSizeB + sampleB] = value;
+            };
+
+            const auto readStartNs = elapsed.nsecsElapsed();
+            if (stageTile)
+            {
+                if (columnOffset == 0)
+                {
+                    if (!stagedSamples.isOpen())
+                    {
+                        const QDir tempDir(mv::Application::current()->getTemporaryDir().path());
+                        stagedSamples.setFileTemplate(tempDir.filePath(QStringLiteral("de-samples-XXXXXX")));
+                        if (!stagedSamples.open())
+                            throw std::runtime_error("Unable to open a temporary file for differential expression samples");
+                    }
+
+                    local::stagePackedSamples(stagedSamples, *packedReader, *tiledStorage, physicalRows, tileFirstColumn, tileColumnCount);
+                    sampleStagingNs += elapsed.nsecsElapsed() - readStartNs;
+                }
+                local::visitStagedSamples(stagedSamples, selectedRows.size(), tileColumnCount, columnOffset, columnCount, tiledStorage->elementSize(), tiledBackend->getElementTypeIndex(), storeSample);
             }
+            else if (packedReader)
+            {
+                const auto elementSize = tiledStorage->elementSize();
+                const auto type = tiledBackend->getElementTypeIndex();
+                local::visitPackedRows(*packedReader, *tiledStorage, physicalRows, firstColumn, columnCount, [&](std::size_t row, const char* data) {
+                    for (std::size_t column = 0; column < columnCount; ++column)
+                        storeSample(row, column, local::readValue(data + column * elementSize, type));
+                });
+            }
+            else
+            {
+                local::visitValues(selectedRows.size(), columnCount, [&](const PointDataAccessVisitor& visitor) {
+                    _points->visitColumns(firstColumn, columnCount, selectedRows, visitor);
+                }, storeSample);
+            }
+            selectionReadNs += elapsed.nsecsElapsed() - readStartNs;
+
+            const bool parallel = columnCount > 1 && columnCount * samplesPerColumn >= local::parallelSampleThreshold;
+#pragma omp parallel for schedule(static) if(parallel)
+            for (std::ptrdiff_t column = 0; column < static_cast<std::ptrdiff_t>(columnCount); ++column)
+            {
+                const auto d = firstColumn + column;
+                const auto samplesA = std::span(valuesA).subspan(column * selectionSizeA, selectionSizeA);
+                const auto samplesB = sameSelection ? samplesA : std::span(valuesB).subspan(column * selectionSizeB, selectionSizeB);
+                // Accumulate in selection order even when physical rows were reordered.
+                meansA[d] = std::accumulate(samplesA.begin(), samplesA.end(), 0.0f) / selectionSizeA;
+                meansB[d] = sameSelection ? meansA[d] : std::accumulate(samplesB.begin(), samplesB.end(), 0.0f) / selectionSizeB;
+                mediansA[d] = computeMedian(samplesA);
+                mediansB[d] = sameSelection ? mediansA[d] : computeMedian(samplesB);
+
+                if (_useAdditionalCalculations) {
+                    SDA[d] = computeSD(samplesA, meansA[d]);
+                    SDB[d] = sameSelection ? SDA[d] : computeSD(samplesB, meansB[d]);
+                    const auto isExpressed = [&](float value) {
+                        return (_norm ? (value - _minValues[d]) * _rescaleValues[d] : value) > thr;
+                    };
+                    pctExpressedA[d] = 100.0f * std::count_if(samplesA.begin(), samplesA.end(), isExpressed) / static_cast<float>(selectionSizeA);
+                    pctExpressedB[d] = sameSelection ? pctExpressedA[d] : 100.0f * std::count_if(samplesB.begin(), samplesB.end(), isExpressed) / static_cast<float>(selectionSizeB);
+                }
+
+                // Optional normalization
+                if (_norm) {
+                    meansA[d] = normAvg(meansA, d);
+                    meansB[d] = normAvg(meansB, d);
+                    mediansA[d] = normAvg(mediansA, d);
+                    mediansB[d] = normAvg(mediansB, d);
+
+                    if (_useAdditionalCalculations) {
+                        SDA[d] = SDA[d] * _rescaleValues[d];
+                        SDB[d] = SDB[d] * _rescaleValues[d];
+                    }
+                }
+            }
+
+            firstColumn += columnCount;
+            ++columnBlocks;
         }
+
+        const auto fileRangeAfter = mv::util::BlobCodec::getFileRangeTelemetry();
+        const auto backendType = _points->getStorageBackendType();
+        auto diagnostics = qInfo().noquote().nospace();
+        diagnostics << "DifferentialExpressionPlugin: selection I/O"
+                    << " backend=" << (backendType ? mv::pointdata::storage::getStorageBackendTypeName(*backendType) : QStringLiteral("mixed-or-unknown"))
+                    << " dataset-rows=" << _points->getNumPoints()
+                    << " genes=" << numDimensions
+                    << " a=" << selectionSizeA << " b=" << selectionSizeB << " unique-rows=" << selectedRows.size()
+                    << " column-blocks=" << columnBlocks
+                    << " selection-read-ms=" << selectionReadNs / 1e6
+                    << " read-path=" << (packedReader ? "packed" : "points-visitor");
+        if (packedReader)
+            diagnostics << " source-tiles-read=" << packedReader->tilesRead() << " sample-staging-ms=" << sampleStagingNs / 1e6;
+
+        if (tiledStorage)
+        {
+            const auto hitsAfter = tiledStorage->cacheHits();
+            const auto missesAfter = tiledStorage->cacheMisses();
+            const auto evictionsAfter = tiledStorage->cacheEvictions();
+            const auto residentBytesAfter = tiledStorage->cacheSizeInBytes();
+            const auto tileHeight = tiledStorage->rowTileSize();
+            const auto tileColumns = 1 + (numDimensions - 1) / tileWidth;
+            diagnostics << " tile-height=" << tileHeight << " tile-width=" << tileWidth
+                        << " selected-tile-rows=" << selectedTileRows << " tile-columns=" << tileColumns
+                        << " distinct-tiles=" << selectedTileRows * tileColumns
+                        << " cache-resident-bytes-before=" << residentBytesBefore
+                        << " cache-resident-bytes-after=" << residentBytesAfter;
+            if (hitsAfter >= hitsBefore && missesAfter >= missesBefore && evictionsAfter >= evictionsBefore)
+            {
+                diagnostics << " cache-hits=" << hitsAfter - hitsBefore
+                            << " cache-misses=" << missesAfter - missesBefore
+                            << " cache-evictions=" << evictionsAfter - evictionsBefore;
+            }
+            else
+                diagnostics << " cache-counters=reset";
+
+            if (tiledStorage->hasPackedTileSource())
+                diagnostics << " packed-codec=" << tiledStorage->packedTileSourceCodec();
+        }
+        else if (_points->isProxy())
+            diagnostics << " tile-counters=unavailable-for-proxy";
+
+        // Core's codec counters cover instrumented file-range reads across the process.
+        diagnostics << " process-file-range-calls=" << fileRangeAfter.calls - fileRangeBefore.calls
+                    << " process-file-range-bytes=" << fileRangeAfter.encodedBytes - fileRangeBefore.encodedBytes
+                    << " process-file-read-ms=" << (fileRangeAfter.readNanoseconds - fileRangeBefore.readNanoseconds) / 1e6
+                    << " process-file-decode-ms=" << (fileRangeAfter.decodeNanoseconds - fileRangeBefore.decodeNanoseconds) / 1e6;
+    }
+    catch (const std::exception& exception)
+    {
+        QMessageBox::warning(&getWidget(), tr("Differential expression"),
+            tr("Unable to read point data: %1").arg(QString::fromUtf8(exception.what())));
+        return;
     }
 
+    const auto tableStartNs = elapsed.nsecsElapsed();
     const auto& dimensionNames = _points->getDimensionNames();
     _tableItemModel->startModelBuilding(_totalTableColumns, numDimensions);
 
@@ -766,7 +1140,7 @@ void DifferentialExpressionPlugin::computeDE()
     }
 
 #pragma omp parallel for schedule(dynamic,1)
-    for (std::ptrdiff_t dimension = 0; dimension < numDimensions; ++dimension)
+    for (std::ptrdiff_t dimension = 0; dimension < static_cast<std::ptrdiff_t>(numDimensions); ++dimension)
     {
         std::vector<QVariant> dataVector;
         dataVector.reserve(_totalTableColumns);
@@ -789,6 +1163,12 @@ void DifferentialExpressionPlugin::computeDE()
         _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
     }
     _tableItemModel->endModelBuilding();
+
+    qDebug() << "DifferentialExpressionPlugin: timings (ms)"
+             << "normalization" << normalizationNs / 1e6
+             << "selection reads" << selectionReadNs / 1e6
+             << "remaining statistics" << (tableStartNs - normalizationNs - selectionReadNs) / 1e6
+             << "table" << (elapsed.nsecsElapsed() - tableStartNs) / 1e6;
 }
 
 void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)

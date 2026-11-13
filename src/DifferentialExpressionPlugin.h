@@ -74,6 +74,8 @@ protected slots:
 
 
 protected:
+    void updateNormalization();
+
     using QLabelArray2 = std::array<QLabel, MultiTriggerAction::Size>;
 
     DropWidget*                             _dropWidget;                /** Widget for drag and drop behavior */
@@ -110,6 +112,8 @@ protected:
 
     std::vector<uint32_t>                   _selectionA;
     std::vector<uint32_t>                   _selectionB;
+    std::vector<std::uint64_t>              _selectionRowsA;
+    std::vector<std::uint64_t>              _selectionRowsB;
 
     // additional calculations
     ToggleAction                            _additionalCalculationsAction; // able or disable additional calculations (SD, %expressed)
