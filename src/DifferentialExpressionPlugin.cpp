@@ -2,6 +2,7 @@
 
 #include <AbstractProjectManager.h>
 #include <Application.h>
+#include <Task.h>
 #include <DatasetsMimeData.h>
 #include <PointData/storage/tiled/TiledPointsStorageBackend.h>
 #include <util/BlobCodec.h>
@@ -9,8 +10,10 @@
 #include <util/Serialization.h>
 
 #include <QDebug>
+#include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -18,6 +21,7 @@
 #include <QMimeData>
 #include <QPushButton>
 #include <QTemporaryFile>
+#include <QTimer>
 
 #include "AdditionalSettings.h"
 #include "WordWrapHeaderView.h"
@@ -937,6 +941,15 @@ void DifferentialExpressionPlugin::computeDE()
     if (numDimensions == 0 || selectionSizeA == 0 || selectionSizeB == 0)
         return;
 
+    auto* progressTask = new mv::Task(this, tr("Differential expression"), { mv::Task::GuiScope::None }, mv::Task::Status::Running);
+    progressTask->setProgressMode(mv::Task::ProgressMode::Manual);
+    progressTask->setProgressDescription(tr("Preparing differential expression"));
+    addNotification(progressTask);
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    const auto cleanupProgressTask = [progressTask]() {
+        QTimer::singleShot(30000, progressTask, &QObject::deleteLater);
+    };
+
     QElapsedTimer elapsed;
     elapsed.start();
     qint64 normalizationNs = 0;
@@ -1015,7 +1028,9 @@ void DifferentialExpressionPlugin::computeDE()
         const bool sameSelection = _selectionRowsA == _selectionRowsB;
         const auto samplesPerColumn = sameSelection ? selectionSizeA : selectionSizeA + selectionSizeB;
         const auto maxColumnsByMemory = std::max<std::size_t>(1, local::medianSampleBudgetBytes / sizeof(float) / samplesPerColumn);
-        const auto maxBlockWidth = std::min(tileWidth, maxColumnsByMemory);
+        // Keep calculation blocks small enough to publish progress throughout long runs.
+        constexpr std::size_t progressBlockWidth = 32;
+        const auto maxBlockWidth = std::min({ tileWidth, maxColumnsByMemory, progressBlockWidth });
         const auto physicalRows = tiledStorage ? local::mapSelectedRows(*_points.get(), selectedRows) : local::PhysicalRowSelection{};
         const auto selectedTileRows = tiledStorage ? local::countSelectedTileRows(physicalRows, tiledStorage->rowTileSize()) : 0;
 
@@ -1130,6 +1145,8 @@ void DifferentialExpressionPlugin::computeDE()
 
             firstColumn += columnCount;
             ++columnBlocks;
+            progressTask->setProgress(0.85f * static_cast<float>(firstColumn) / static_cast<float>(numDimensions), tr("Computing statistics"));
+            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         }
 
         const auto fileRangeAfter = mv::util::BlobCodec::getFileRangeTelemetry();
@@ -1182,6 +1199,9 @@ void DifferentialExpressionPlugin::computeDE()
     }
     catch (const std::exception& exception)
     {
+        progressTask->setStatus(mv::Task::Status::Aborted);
+        cleanupProgressTask();
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
         QMessageBox::warning(&getWidget(), tr("Differential expression"),
             tr("Unable to read point data: %1").arg(QString::fromUtf8(exception.what())));
         return;
@@ -1229,6 +1249,11 @@ void DifferentialExpressionPlugin::computeDE()
         _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
     }
     _tableItemModel->endModelBuilding();
+
+    progressTask->setProgress(1.0f, tr("Finalizing results"));
+    progressTask->setStatus(mv::Task::Status::Finished);
+    cleanupProgressTask();
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     qDebug() << "DifferentialExpressionPlugin: timings (ms)"
              << "normalization" << normalizationNs / 1e6
