@@ -4,6 +4,10 @@
 #include <Application.h>
 #include <Task.h>
 #include <DatasetsMimeData.h>
+#include <workflow/WorkflowExecutionContext.h>
+#include <workflow/WorkflowOptions.h>
+#include <workflow/WorkflowPlan.h>
+#include <workflow/WorkflowResult.h>
 #include <PointData/storage/tiled/TiledPointsStorageBackend.h>
 #include <util/BlobCodec.h>
 #include <util/CodecRegistry.h>
@@ -21,22 +25,26 @@
 #include <QMimeData>
 #include <QPushButton>
 #include <QTemporaryFile>
-#include <QTimer>
 
 #include "AdditionalSettings.h"
 #include "WordWrapHeaderView.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstring>
-#include <iterator>
+#include <exception>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <stdexcept>
+
+#include <omp.h>
 
 Q_PLUGIN_METADATA(IID "nl.BioVault.DifferentialExpressionPlugin")
 
@@ -124,12 +132,13 @@ namespace local
     using PhysicalRowSelection = std::vector<std::pair<std::uint64_t, std::size_t>>;
 
     template <typename Rows>
-    PhysicalRowSelection mapSelectedRows(const Points& points, const Rows& rows)
+    PhysicalRowSelection mapSelectedRows(const Points& points, const Rows& rows, const std::function<void(std::size_t, std::size_t)>& progressCallback = {})
     {
         const auto full = points.isFull();
         const auto rowCount = points.getNumPoints();
         PhysicalRowSelection physicalRows;
         physicalRows.reserve(rows.size());
+        const auto progressInterval = std::max<std::size_t>(1, rows.size() / 100);
 
         for (std::size_t position = 0; position < rows.size(); ++position)
         {
@@ -139,6 +148,9 @@ namespace local
 
             const auto physicalRow = full ? row : points.indices.at(static_cast<std::size_t>(row));
             physicalRows.emplace_back(physicalRow, position);
+
+            if (progressCallback && ((position + 1) % progressInterval == 0 || position + 1 == rows.size()))
+                progressCallback(position + 1, rows.size());
         }
 
         if (!full)
@@ -332,7 +344,7 @@ namespace local
         if (values.empty())
             return;
 
-        if (points.isProxy())
+        /*if (points.isProxy())
         {
             for (const auto& dataset : points.getProxyMembers())
             {
@@ -347,7 +359,7 @@ namespace local
             if (!values.empty())
                 throw std::runtime_error("Expression dataset proxy did not cover all rows");
             return;
-        }
+        }*/
 
         if (const auto* backend = getTiledBackend(points))
         {
@@ -387,6 +399,37 @@ namespace local
     constexpr auto expressionOwnerProperty = "DifferentialExpressionPlugin.ExpressionOwner";
 
 }
+
+/**
+ * @brief Transfers computed values from the workflow worker stage to the GUI stage.
+ *
+ * The workflow holds this object through stage execution and completion
+ * reporting. The worker fills it, and the GUI stage reads it to construct the
+ * table and persist any newly computed normalization statistics.
+ *
+ * @author Thomas Kroes
+ */
+struct DifferentialExpressionResult
+{
+    std::size_t numDimensions          = 0;       /**< Number of dimensions represented by the result vectors. */
+    std::size_t totalTableColumns      = 0;       /**< Number of fields in each table row, including the dimension ID. */
+    bool        additionalCalculations = false;   /**< Whether standard-deviation and expression-percentage values are present. */
+    std::vector<QString> dimensionNames;          /**< Dimension labels, in source dataset order. */
+    std::vector<float> meansA;                    /**< Mean values for selection A, optionally normalized. */
+    std::vector<float> meansB;                    /**< Mean values for selection B, optionally normalized. */
+    std::vector<float> mediansA;                  /**< Median values for selection A, optionally normalized. */
+    std::vector<float> mediansB;                  /**< Median values for selection B, optionally normalized. */
+    std::vector<float> standardDeviationsA;       /**< Sample standard deviations for selection A. */
+    std::vector<float> standardDeviationsB;       /**< Sample standard deviations for selection B. */
+    std::vector<float> percentagesExpressedA;     /**< Percentages above the expression threshold in selection A. */
+    std::vector<float> percentagesExpressedB;     /**< Percentages above the expression threshold in selection B. */
+    QVariantMap dimensionStatistics;              /**< Updated dimension minima and maxima for dataset caching. */
+    QString error;                                /**< Error text from caught worker failures; empty when none was caught. */
+    qint64 normalizationNanoseconds = 0;          /**< Elapsed time through the normalization phase, in nanoseconds. */
+    qint64 selectionReadNanoseconds = 0;          /**< Time spent reading selected point values. */
+    qint64 tableNanoseconds         = 0;          /**< Time spent building the GUI table model. */
+    qint64 totalNanoseconds         = 0;          /**< Worker-stage duration, excluding GUI table construction. */
+};
 
 DifferentialExpressionPlugin::DifferentialExpressionPlugin(const PluginFactory* factory) :
     ViewPlugin(factory),
@@ -706,7 +749,7 @@ void DifferentialExpressionPlugin::init()
 
         sortAndUnique(selection);
 
-        if (_points->isProxy() || (_points->isFull() && !_points->isDerivedData()))
+        if (_points->isFull() && !_points->isDerivedData())
         {
             rows.assign(selection.begin(), selection.end());
         }
@@ -820,35 +863,44 @@ void DifferentialExpressionPlugin::positionDatasetChanged()
     _tableItemModel->setStatus(TableModel::Status::Undefined);
 }
 
-void DifferentialExpressionPlugin::updateNormalization()
+void DifferentialExpressionPlugin::updateNormalization(const mv::Dataset<Points>& points, std::vector<float>& minValues, std::vector<float>& rescaleValues, QVariantMap& dimensionStatistics, const ProgressCallback& reportProgress)
 {
-    const auto numDimensions = static_cast<std::size_t>(_points->getNumDimensions());
-    const auto numPoints = _points->getNumPoints();
-    auto dimensionStatistics = _points->getProperty("Dimension Statistics").toMap();
+    const auto numDimensions = static_cast<std::size_t>(points->getNumDimensions());
+    const auto numPoints     = points->getNumPoints();
+
     const auto cachedMin = dimensionStatistics.value("min").toList();
     const auto cachedMax = dimensionStatistics.value("max").toList();
 
     if (cachedMin.size() == numDimensions && cachedMax.size() == numDimensions)
     {
-        _minValues.resize(numDimensions);
-        _rescaleValues.resize(numDimensions);
+        minValues.resize(numDimensions);
+        rescaleValues.resize(numDimensions);
         for (std::size_t column = 0; column < numDimensions; ++column)
         {
-            _minValues[column] = cachedMin[column].toFloat();
-            _rescaleValues[column] = cachedMax[column].toFloat();
+            minValues[column]     = cachedMin[column].toFloat();
+            rescaleValues[column] = cachedMax[column].toFloat();
         }
+
+        reportProgress(0.15f, tr("Normalization ready"));
     }
     else
     {
-        _minValues.assign(numDimensions, std::numeric_limits<float>::max());
-        _rescaleValues.assign(numDimensions, std::numeric_limits<float>::lowest());
+        minValues.assign(numDimensions, std::numeric_limits<float>::max());
+        rescaleValues.assign(numDimensions, std::numeric_limits<float>::lowest());
 
-        const auto* tiledBackend = local::getTiledBackend(*_points.get());
-        const auto tiledStorage = tiledBackend ? tiledBackend->getStorage() : nullptr;
-        const auto columnBlockSize = tiledStorage ? tiledStorage->columnTileSize() : local::defaultColumnBlockSize;
-        const auto rowBlockSize = tiledStorage ? tiledStorage->rowTileSize() : numPoints;
+        const auto* tiledBackend = local::getTiledBackend(*points.get());
+        const auto  tiledStorage = tiledBackend ? tiledBackend->getStorage() : nullptr;
+
+        const auto columnBlockSize  = tiledStorage ? tiledStorage->columnTileSize() : local::defaultColumnBlockSize;
+        const auto rowBlockSize     = tiledStorage ? tiledStorage->rowTileSize() : numPoints;
+        const auto rowBlockCount    = numPoints == 0 ? 0 : 1 + (numPoints - 1) / rowBlockSize;
+        const auto columnBlockCount = 1 + (numDimensions - 1) / columnBlockSize;
+        const auto totalBlocks      = rowBlockCount * columnBlockCount;
+        const auto progressInterval = std::max<std::size_t>(1, totalBlocks / 100);
+
+        std::size_t completedBlocks = 0;
         std::optional<local::PackedTileReader> packedReader;
-        if (tiledStorage && _points->isFull())
+        if (tiledStorage && points->isFull())
             packedReader.emplace(*tiledStorage);
 
         for (std::uint64_t firstRow = 0; firstRow < numPoints; firstRow += rowBlockSize)
@@ -870,24 +922,30 @@ void DifferentialExpressionPlugin::updateNormalization()
                                  tiledBackend->getElementTypeIndex(), elementSize, {}});
                     }
                     else
-                        _points->visitRange(firstRow, rowCount, firstColumn, columnCount, visitor);
+                        points->visitRange(firstRow, rowCount, firstColumn, columnCount, visitor);
                 }, [&](std::size_t, std::size_t column, float value) {
                     const auto dimension = firstColumn + column;
-                    _minValues[dimension] = std::min(_minValues[dimension], value);
-                    _rescaleValues[dimension] = std::max(_rescaleValues[dimension], value);
+                    minValues[dimension] = std::min(minValues[dimension], value);
+                    rescaleValues[dimension] = std::max(rescaleValues[dimension], value);
                 });
+
+                ++completedBlocks;
+                if (completedBlocks % progressInterval == 0 || completedBlocks == totalBlocks)
+                {
+                    const auto fraction = totalBlocks == 0 ? 1.0f : static_cast<float>(completedBlocks) / static_cast<float>(totalBlocks);
+                    reportProgress(0.15f * fraction, tr("Normalizing point data (%1/%2 blocks)").arg(completedBlocks).arg(totalBlocks));
+                }
             }
         }
 
-        dimensionStatistics["min"] = QVariantList(_minValues.cbegin(), _minValues.cend());
-        dimensionStatistics["max"] = QVariantList(_rescaleValues.cbegin(), _rescaleValues.cend());
-        _points->setProperty("Dimension Statistics", dimensionStatistics);
+        dimensionStatistics["min"] = QVariantList(minValues.cbegin(), minValues.cend());
+        dimensionStatistics["max"] = QVariantList(rescaleValues.cbegin(), rescaleValues.cend());
     }
 
     for (std::size_t column = 0; column < numDimensions; ++column)
     {
-        const float diff = _rescaleValues[column] - _minValues[column];
-        _rescaleValues[column] = std::fabs(diff) > 1e-6f ? 1.0f / diff : 1.0f;
+        const float diff = rescaleValues[column] - minValues[column];
+        rescaleValues[column] = std::fabs(diff) > 1e-6f ? 1.0f / diff : 1.0f;
     }
 }
 
@@ -929,34 +987,151 @@ void DifferentialExpressionPlugin::writeToCSV() const
 
 void DifferentialExpressionPlugin::computeDE()
 {
+    if (_computationInProgress)
+        return;
+
     if (!_points.isValid())
         return;
 
-    _tableItemModel->invalidate();
-
-    const auto numDimensions = static_cast<std::size_t>(_points->getNumDimensions());
+    const auto numDimensions  = static_cast<std::size_t>(_points->getNumDimensions());
     const auto selectionSizeA = _selectionRowsA.size();
     const auto selectionSizeB = _selectionRowsB.size();
 
     if (numDimensions == 0 || selectionSizeA == 0 || selectionSizeB == 0)
         return;
 
-    auto* progressTask = new mv::Task(this, tr("Differential expression"), { mv::Task::GuiScope::None }, mv::Task::Status::Running);
-    progressTask->setProgressMode(mv::Task::ProgressMode::Manual);
-    progressTask->setProgressDescription(tr("Preparing differential expression"));
-    addNotification(progressTask);
-    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-    const auto cleanupProgressTask = [progressTask]() {
-        QTimer::singleShot(30000, progressTask, &QObject::deleteLater);
-    };
+    _tableItemModel->invalidate();
+    _computationInProgress = true;
+
+    auto points                       = _points;
+    const auto selectionRowsA         = _selectionRowsA;
+    const auto selectionRowsB         = _selectionRowsB;
+    const auto normalize              = _norm;
+    const auto additionalCalculations = _useAdditionalCalculations;
+    const auto threshold              = _thresholdExpressedAction.getValue();
+    const auto temporaryDirectory     = mv::Application::current()->getTemporaryDir().path();
+
+    const auto result = std::make_shared<DifferentialExpressionResult>();
+    auto workflow     = std::make_unique<mv::workflow::WorkflowPlan>(tr("Differential expression"));
+    workflow->addSequentialStage(tr("Compute differential expression"), [points, selectionRowsA, selectionRowsB, normalize, additionalCalculations, threshold, temporaryDirectory, result](const mv::workflow::WorkflowPlan::Job&, const mv::workflow::SharedWorkflowExecutionContext& context) {
+        float lastProgress        = -1.0f;
+        const auto reportProgress = [context, &lastProgress](float progress, const QString&) {
+            if (progress - lastProgress < 0.005f)
+                return;
+
+            lastProgress = progress;
+            context->setProgress(progress);
+        };
+
+        DifferentialExpressionPlugin::runDEComputation(points, selectionRowsA, selectionRowsB, normalize, additionalCalculations, threshold, temporaryDirectory, reportProgress, *result);
+    }, mv::workflow::WorkflowPlan::JobThreadAffinity::CurrentWorkerThread, 0.9);
+
+    QPointer<DifferentialExpressionPlugin> safeThis(this);
+    workflow->addSequentialStage(tr("Build differential expression table"), [safeThis, points, result, normalize](const mv::workflow::WorkflowPlan::Job&, const mv::workflow::SharedWorkflowExecutionContext& context) mutable {
+        if (!safeThis || !points.isValid())
+            return;
+
+        auto* plugin = safeThis.data();
+        plugin->_totalTableColumns = static_cast<int>(result->totalTableColumns);
+
+        if (normalize && !result->dimensionStatistics.isEmpty())
+            points->setProperty("Dimension Statistics", result->dimensionStatistics);
+
+        QElapsedTimer tableElapsed;
+        tableElapsed.start();
+
+        plugin->_tableItemModel->startModelBuilding(result->totalTableColumns, result->numDimensions);
+        plugin->_tableItemModel->setHorizontalHeader(0, QString("ID"));
+        plugin->_tableItemModel->setHorizontalHeader(1, QString("DE"));
+        plugin->_tableItemModel->setHorizontalHeader(2, QString("Mean (Sel. 1)"));
+        plugin->_tableItemModel->setHorizontalHeader(3, QString("Mean (Sel. 2)"));
+        plugin->_tableItemModel->setHorizontalHeader(4, QString("Median (Sel. 1)"));
+        plugin->_tableItemModel->setHorizontalHeader(5, QString("Median (Sel. 2)"));
+
+        if (result->additionalCalculations)
+        {
+            plugin->_tableItemModel->setHorizontalHeader(6, QString("SD (Sel. 1)"));
+            plugin->_tableItemModel->setHorizontalHeader(7, QString("SD (Sel. 2)"));
+            plugin->_tableItemModel->setHorizontalHeader(8, QString("% Expressed (Sel. 1)"));
+            plugin->_tableItemModel->setHorizontalHeader(9, QString("% Expressed (Sel. 2)"));
+        }
+
+        const auto progressInterval = std::max<std::size_t>(1, result->numDimensions / 100);
+        for (std::size_t dimension = 0; dimension < result->numDimensions; ++dimension)
+        {
+            std::vector<QVariant> dataVector;
+            dataVector.reserve(result->totalTableColumns);
+            dataVector.push_back(result->dimensionNames[dimension]);
+            dataVector.push_back(local::fround(result->meansA[dimension] - result->meansB[dimension], 3));
+            dataVector.push_back(local::fround(result->meansA[dimension], 3));
+            dataVector.push_back(local::fround(result->meansB[dimension], 3));
+            dataVector.push_back(local::fround(result->mediansA[dimension], 3));
+            dataVector.push_back(local::fround(result->mediansB[dimension], 3));
+
+            if (result->additionalCalculations)
+            {
+                dataVector.push_back(local::fround(result->standardDeviationsA[dimension], 3));
+                dataVector.push_back(local::fround(result->standardDeviationsB[dimension], 3));
+                dataVector.push_back(local::fround(result->percentagesExpressedA[dimension], 3));
+                dataVector.push_back(local::fround(result->percentagesExpressedB[dimension], 3));
+            }
+
+            assert(dataVector.size() == result->totalTableColumns);
+            plugin->_tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
+
+            if ((dimension + 1) % progressInterval == 0 || dimension + 1 == result->numDimensions)
+            {
+                const auto progress = result->numDimensions == 0 ? 1.0 : static_cast<double>(dimension + 1) / static_cast<double>(result->numDimensions);
+                context->setProgress(progress);
+                QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            }
+        }
+
+        plugin->_tableItemModel->endModelBuilding();
+
+        result->tableNanoseconds = tableElapsed.nsecsElapsed();
+
+        qDebug() << "DifferentialExpressionPlugin: timings (ms)"
+                 << "normalization" << result->normalizationNanoseconds / 1e6
+                 << "selection reads" << result->selectionReadNanoseconds / 1e6
+                 << "remaining statistics" << (result->totalNanoseconds - result->normalizationNanoseconds - result->selectionReadNanoseconds) / 1e6
+                 << "table" << result->tableNanoseconds / 1e6;
+    }, mv::workflow::WorkflowPlan::JobThreadAffinity::GuiThread, 0.1);
+
+    mv::workflow::WorkflowOptions options;
+    options.reporting.progress             = true;
+    options.reporting.finishedNotification = false;
+    auto future = mv::Application::getWorkflowPlanExecutor().execute(std::move(workflow), nullptr, options);
+    future.onFinished(this, [this, result](const mv::workflow::SharedWorkflowResult& workflowResult) {
+        _computationInProgress = false;
+
+        if (!result->error.isEmpty())
+            QMessageBox::warning(&getWidget(), tr("Differential expression"), tr("The computation failed: %1").arg(result->error));
+        else if (!workflowResult || workflowResult->getStatus() != mv::workflow::WorkflowResultBase::Status::Success)
+            QMessageBox::warning(&getWidget(), tr("Differential expression"), tr("The differential-expression workflow did not complete successfully."));
+    });
+}
+
+void DifferentialExpressionPlugin::runDEComputation(mv::Dataset<Points> points, std::vector<std::uint64_t> selectionRowsA, std::vector<std::uint64_t> selectionRowsB, bool normalize, bool additionalCalculations, float threshold, QString temporaryDirectory, const ProgressCallback& reportProgress, DifferentialExpressionResult& result)
+{
+    if (!points.isValid() || points->getNumDimensions() == 0 || selectionRowsA.empty() || selectionRowsB.empty())
+        throw std::invalid_argument("Differential-expression input became unavailable before computation started");
+
+    const auto numDimensions  = static_cast<std::size_t>(points->getNumDimensions());
+    const auto selectionSizeA = selectionRowsA.size();
+    const auto selectionSizeB = selectionRowsB.size();
 
     QElapsedTimer elapsed;
     elapsed.start();
+
     qint64 normalizationNs = 0;
     qint64 selectionReadNs = 0;
 
     // Determine dynamic column counts based on the toggle
-    _totalTableColumns = _useAdditionalCalculations ? 10 : 6;
+    const auto totalTableColumns  = additionalCalculations ? 10 : 6;
+    result.numDimensions          = numDimensions;
+    result.totalTableColumns      = totalTableColumns;
+    result.additionalCalculations = additionalCalculations;
 
     std::vector<float> meansA(numDimensions, 0);
     std::vector<float> meansB(numDimensions, 0);
@@ -973,66 +1148,94 @@ void DifferentialExpressionPlugin::computeDE()
     std::vector<float> pctExpressedA(numDimensions, 0);
     std::vector<float> pctExpressedB(numDimensions, 0);
 
-    const float thr = _thresholdExpressedAction.getValue();
+    std::vector<float> minValues;
+    std::vector<float> rescaleValues;
+
+    auto dimensionStatistics = points->getProperty("Dimension Statistics").toMap();
 
     auto computeMedian = [](std::span<float> vec) -> float {
         std::nth_element(vec.begin(), vec.begin() + vec.size() / 2, vec.end());
         return vec[vec.size() / 2];
-        };
+    };
 
     // sample standard deviation
-    auto computeSD = [](std::span<const float> vec, float mean) -> float {
-        if (vec.size() < 2) 
+    auto computeSD     = [](std::span<const float> vec, float mean) -> float {
+        if (vec.size() < 2)
             return 0.0f;
 
         float sum = 0.0f;
-        for (const float& val : vec) 
+        for (const float& val : vec)
         {
             const float diff = val - mean;
             sum += diff * diff;
         }
         return std::sqrt(sum / (static_cast<float>(vec.size()) - 1.0f));
-        };
+    };
 
-    auto normAvg = [&](const std::vector<float>& avgs, const std::ptrdiff_t dim) -> float {
-        return (avgs[dim] - _minValues[dim]) * _rescaleValues[dim];
-        };
+    auto normAvg       = [&](const std::vector<float>& avgs, const std::ptrdiff_t dim) -> float {
+        return (avgs[dim] - minValues[dim]) * rescaleValues[dim];
+    };
 
     try
     {
-        if (_norm)
+        if (normalize)
         {
-            updateNormalization();
+            updateNormalization(points, minValues, rescaleValues, dimensionStatistics, reportProgress);
             normalizationNs = elapsed.nsecsElapsed();
         }
+        else
+            reportProgress(0.15f, tr("Preparing selections"));
 
-        // Read rows shared by both groups only once.
+        // Merge both selections while retaining each row's position in both groups.
+        reportProgress(0.15f, tr("Combining selections"));
+
         std::vector<std::uint64_t> selectedRows;
-        selectedRows.reserve(selectionSizeA + selectionSizeB);
-        std::set_union(_selectionRowsA.begin(), _selectionRowsA.end(), _selectionRowsB.begin(), _selectionRowsB.end(), std::back_inserter(selectedRows));
-
         std::vector<std::pair<std::size_t, std::size_t>> sampleIndices;
-        sampleIndices.reserve(selectedRows.size());
-        std::size_t nextA = 0;
-        std::size_t nextB = 0;
-        for (const auto row : selectedRows)
+        std::size_t nextA                    = 0;
+        std::size_t nextB                    = 0;
+        const auto totalSelectionEntries     = selectionSizeA + selectionSizeB;
+        const auto selectionProgressInterval = std::max<std::size_t>(1, totalSelectionEntries / 100);
+        selectedRows.reserve(selectionSizeA + selectionSizeB);
+        sampleIndices.reserve(std::max(selectionSizeA, selectionSizeB));
+
+        while (nextA < selectionSizeA || nextB < selectionSizeB)
         {
-            const auto sampleA = nextA < selectionSizeA && _selectionRowsA[nextA] == row ? nextA++ : selectionSizeA;
-            const auto sampleB = nextB < selectionSizeB && _selectionRowsB[nextB] == row ? nextB++ : selectionSizeB;
+            const auto rowA    = nextA < selectionSizeA ? selectionRowsA[nextA] : std::numeric_limits<std::uint64_t>::max();
+            const auto rowB    = nextB < selectionSizeB ? selectionRowsB[nextB] : std::numeric_limits<std::uint64_t>::max();
+            const auto row     = std::min(rowA, rowB);
+            const auto sampleA = rowA == row ? nextA++ : selectionSizeA;
+            const auto sampleB = rowB == row ? nextB++ : selectionSizeB;
+            selectedRows.push_back(row);
             sampleIndices.emplace_back(sampleA, sampleB);
+
+            if (selectedRows.size() % selectionProgressInterval == 0 || (nextA == selectionSizeA && nextB == selectionSizeB))
+            {
+                const auto fraction = static_cast<float>(nextA + nextB) / static_cast<float>(totalSelectionEntries);
+                reportProgress(0.15f + 0.02f * fraction, tr("Combining selections (%1%)").arg(static_cast<int>(fraction * 100.0f)));
+            }
         }
 
-        const auto* tiledBackend = local::getTiledBackend(*_points.get());
-        const auto tiledStorage = tiledBackend ? tiledBackend->getStorage() : nullptr;
-        const auto tileWidth = tiledStorage ? tiledStorage->columnTileSize() : local::defaultColumnBlockSize;
-        const bool sameSelection = _selectionRowsA == _selectionRowsB;
-        const auto samplesPerColumn = sameSelection ? selectionSizeA : selectionSizeA + selectionSizeB;
+        const auto* tiledBackend = local::getTiledBackend(*points.get());
+        const auto  tiledStorage = tiledBackend ? tiledBackend->getStorage() : nullptr;
+        const auto  tileWidth    = tiledStorage ? tiledStorage->columnTileSize() : local::defaultColumnBlockSize;
+
+        const bool sameSelection      = selectionRowsA == selectionRowsB;
+        const auto samplesPerColumn   = sameSelection ? selectionSizeA : selectionSizeA + selectionSizeB;
         const auto maxColumnsByMemory = std::max<std::size_t>(1, local::medianSampleBudgetBytes / sizeof(float) / samplesPerColumn);
+
         // Keep calculation blocks small enough to publish progress throughout long runs.
         constexpr std::size_t progressBlockWidth = 32;
-        const auto maxBlockWidth = std::min({ tileWidth, maxColumnsByMemory, progressBlockWidth });
-        const auto physicalRows = tiledStorage ? local::mapSelectedRows(*_points.get(), selectedRows) : local::PhysicalRowSelection{};
+        const auto maxBlockWidth       = std::min({ tileWidth, maxColumnsByMemory, progressBlockWidth });
+
+        reportProgress(0.17f, tr("Mapping selected rows"));
+
+        const auto physicalRows = tiledStorage ? local::mapSelectedRows(*points.get(), selectedRows, [reportProgress](std::size_t completed, std::size_t total) {
+            const auto fraction = static_cast<float>(completed) / static_cast<float>(total);
+            reportProgress(0.17f + 0.02f * fraction, tr("Mapping selected rows (%1%)").arg(static_cast<int>(fraction * 100.0f)));
+        }) : local::PhysicalRowSelection{};
         const auto selectedTileRows = tiledStorage ? local::countSelectedTileRows(physicalRows, tiledStorage->rowTileSize()) : 0;
+
+        reportProgress(0.2f, tr("Preparing sample readers"));
 
         std::optional<local::PackedTileReader> packedReader;
         if (tiledStorage)
@@ -1045,21 +1248,25 @@ void DifferentialExpressionPlugin::computeDE()
         QTemporaryFile stagedSamples;
         qint64 sampleStagingNs = 0;
 
-        const auto hitsBefore = tiledStorage ? tiledStorage->cacheHits() : 0;
-        const auto missesBefore = tiledStorage ? tiledStorage->cacheMisses() : 0;
-        const auto evictionsBefore = tiledStorage ? tiledStorage->cacheEvictions() : 0;
+        const auto hitsBefore          = tiledStorage ? tiledStorage->cacheHits() : 0;
+        const auto missesBefore        = tiledStorage ? tiledStorage->cacheMisses() : 0;
+        const auto evictionsBefore     = tiledStorage ? tiledStorage->cacheEvictions() : 0;
         const auto residentBytesBefore = tiledStorage ? tiledStorage->cacheSizeInBytes() : 0;
-        const auto fileRangeBefore = mv::util::BlobCodec::getFileRangeTelemetry();
+        const auto fileRangeBefore     = mv::util::BlobCodec::getFileRangeTelemetry();
         std::size_t columnBlocks = 0;
 
         for (std::size_t firstColumn = 0; firstColumn < numDimensions;)
         {
             // Finish one physical column tile before moving to the next.
-            const auto columnOffset = firstColumn % tileWidth;
+            const auto columnOffset    = firstColumn % tileWidth;
             const auto tileFirstColumn = firstColumn - columnOffset;
             const auto tileColumnCount = std::min(tileWidth, numDimensions - tileFirstColumn);
-            const auto columnCount = std::min(tileColumnCount - columnOffset, maxBlockWidth);
-            const bool stageTile = packedReader && tileColumnCount > maxBlockWidth;
+            const auto columnCount     = std::min(tileColumnCount - columnOffset, maxBlockWidth);
+            const bool stageTile       = packedReader && tileColumnCount > maxBlockWidth;
+            const auto blockProgress   = 0.2f + 0.65f * static_cast<float>(firstColumn) / static_cast<float>(numDimensions);
+
+            reportProgress(blockProgress, stageTile && columnOffset == 0 ? tr("Staging selected samples") : tr("Reading selected samples"));
+
             std::vector<float> valuesA(columnCount * selectionSizeA);
             std::vector<float> valuesB(sameSelection ? 0 : columnCount * selectionSizeB);
 
@@ -1078,7 +1285,7 @@ void DifferentialExpressionPlugin::computeDE()
                 {
                     if (!stagedSamples.isOpen())
                     {
-                        const QDir tempDir(mv::Application::current()->getTemporaryDir().path());
+                        const QDir tempDir(temporaryDirectory);
                         stagedSamples.setFileTemplate(tempDir.filePath(QStringLiteral("de-samples-XXXXXX")));
                         if (!stagedSamples.open())
                             throw std::runtime_error("Unable to open a temporary file for differential expression samples");
@@ -1100,12 +1307,48 @@ void DifferentialExpressionPlugin::computeDE()
             }
             else
             {
-                local::visitValues(selectedRows.size(), columnCount, [&](const PointDataAccessVisitor& visitor) {
-                    _points->visitColumns(firstColumn, columnCount, selectedRows, visitor);
-                }, storeSample);
+                const bool parallelRead = columnCount * selectedRows.size() >= local::parallelSampleThreshold;
+                const auto readChunkCount = parallelRead
+                    ? std::min(selectedRows.size(), static_cast<std::size_t>(omp_get_max_threads()) * 4)
+                    : std::size_t{ 1 };
+                std::atomic_bool readFailed = false;
+                std::exception_ptr readException;
+
+#pragma omp parallel for schedule(dynamic,1) if(parallelRead)
+                for (std::ptrdiff_t chunk = 0; chunk < static_cast<std::ptrdiff_t>(readChunkCount); ++chunk)
+                {
+                    if (readFailed.load())
+                        continue;
+
+                    const auto rowBegin = selectedRows.size() * static_cast<std::size_t>(chunk) / readChunkCount;
+                    const auto rowEnd = selectedRows.size() * (static_cast<std::size_t>(chunk) + 1) / readChunkCount;
+
+                    try
+                    {
+                        local::visitValues(rowEnd - rowBegin, columnCount, [&](const PointDataAccessVisitor& visitor) {
+                            for (auto row = rowBegin; row < rowEnd; ++row)
+                                points->visitRange(selectedRows[row], 1, firstColumn, columnCount, visitor);
+                        }, [&](std::size_t row, std::size_t column, float value) {
+                            storeSample(rowBegin + row, column, value);
+                        });
+                    }
+                    catch (...)
+                    {
+#pragma omp critical(differential_expression_read_exception)
+                        {
+                            if (!readException)
+                                readException = std::current_exception();
+                        }
+                        readFailed.store(true);
+                    }
+                }
+
+                if (readException)
+                    std::rethrow_exception(readException);
             }
             selectionReadNs += elapsed.nsecsElapsed() - readStartNs;
 
+            reportProgress(blockProgress, tr("Computing statistics"));
             const bool parallel = columnCount > 1 && columnCount * samplesPerColumn >= local::parallelSampleThreshold;
 #pragma omp parallel for schedule(static) if(parallel)
             for (std::ptrdiff_t column = 0; column < static_cast<std::ptrdiff_t>(columnCount); ++column)
@@ -1119,42 +1362,41 @@ void DifferentialExpressionPlugin::computeDE()
                 mediansA[d] = computeMedian(samplesA);
                 mediansB[d] = sameSelection ? mediansA[d] : computeMedian(samplesB);
 
-                if (_useAdditionalCalculations) {
+                if (additionalCalculations) {
                     SDA[d] = computeSD(samplesA, meansA[d]);
                     SDB[d] = sameSelection ? SDA[d] : computeSD(samplesB, meansB[d]);
                     const auto isExpressed = [&](float value) {
-                        return (_norm ? (value - _minValues[d]) * _rescaleValues[d] : value) > thr;
+                        return (normalize ? (value - minValues[d]) * rescaleValues[d] : value) > threshold;
                     };
                     pctExpressedA[d] = 100.0f * std::count_if(samplesA.begin(), samplesA.end(), isExpressed) / static_cast<float>(selectionSizeA);
                     pctExpressedB[d] = sameSelection ? pctExpressedA[d] : 100.0f * std::count_if(samplesB.begin(), samplesB.end(), isExpressed) / static_cast<float>(selectionSizeB);
                 }
 
                 // Optional normalization
-                if (_norm) {
+                if (normalize) {
                     meansA[d] = normAvg(meansA, d);
                     meansB[d] = normAvg(meansB, d);
                     mediansA[d] = normAvg(mediansA, d);
                     mediansB[d] = normAvg(mediansB, d);
 
-                    if (_useAdditionalCalculations) {
-                        SDA[d] = SDA[d] * _rescaleValues[d];
-                        SDB[d] = SDB[d] * _rescaleValues[d];
+                    if (additionalCalculations) {
+                        SDA[d] = SDA[d] * rescaleValues[d];
+                        SDB[d] = SDB[d] * rescaleValues[d];
                     }
                 }
             }
 
             firstColumn += columnCount;
             ++columnBlocks;
-            progressTask->setProgress(0.85f * static_cast<float>(firstColumn) / static_cast<float>(numDimensions), tr("Computing statistics"));
-            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+            reportProgress(0.2f + 0.65f * static_cast<float>(firstColumn) / static_cast<float>(numDimensions), tr("Computing statistics"));
         }
 
         const auto fileRangeAfter = mv::util::BlobCodec::getFileRangeTelemetry();
-        const auto backendType = _points->getStorageBackendType();
+        const auto backendType = points->getStorageBackendType();
         auto diagnostics = qInfo().noquote().nospace();
         diagnostics << "DifferentialExpressionPlugin: selection I/O"
                     << " backend=" << (backendType ? mv::pointdata::storage::getStorageBackendTypeName(*backendType) : QStringLiteral("mixed-or-unknown"))
-                    << " dataset-rows=" << _points->getNumPoints()
+                    << " dataset-rows=" << points->getNumPoints()
                     << " genes=" << numDimensions
                     << " a=" << selectionSizeA << " b=" << selectionSizeB << " unique-rows=" << selectedRows.size()
                     << " column-blocks=" << columnBlocks
@@ -1188,8 +1430,6 @@ void DifferentialExpressionPlugin::computeDE()
             if (tiledStorage->hasPackedTileSource())
                 diagnostics << " packed-codec=" << tiledStorage->packedTileSourceCodec();
         }
-        else if (_points->isProxy())
-            diagnostics << " tile-counters=unavailable-for-proxy";
 
         // Core's codec counters cover instrumented file-range reads across the process.
         diagnostics << " process-file-range-calls=" << fileRangeAfter.calls - fileRangeBefore.calls
@@ -1199,67 +1439,30 @@ void DifferentialExpressionPlugin::computeDE()
     }
     catch (const std::exception& exception)
     {
-        progressTask->setStatus(mv::Task::Status::Aborted);
-        cleanupProgressTask();
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        QMessageBox::warning(&getWidget(), tr("Differential expression"),
-            tr("Unable to read point data: %1").arg(QString::fromUtf8(exception.what())));
-        return;
+        result.error = QString::fromUtf8(exception.what());
+        throw;
     }
-
-    const auto tableStartNs = elapsed.nsecsElapsed();
-    const auto& dimensionNames = _points->getDimensionNames();
-    _tableItemModel->startModelBuilding(_totalTableColumns, numDimensions);
-
-    _tableItemModel->setHorizontalHeader(0, QString("ID"));
-    _tableItemModel->setHorizontalHeader(1, QString("DE"));
-    _tableItemModel->setHorizontalHeader(2, QString("Mean (Sel. 1)"));
-    _tableItemModel->setHorizontalHeader(3, QString("Mean (Sel. 2)"));
-    _tableItemModel->setHorizontalHeader(4, QString("Median (Sel. 1)"));
-    _tableItemModel->setHorizontalHeader(5, QString("Median (Sel. 2)"));
-
-    if (_useAdditionalCalculations) {
-        _tableItemModel->setHorizontalHeader(6, QString("SD (Sel. 1)"));
-        _tableItemModel->setHorizontalHeader(7, QString("SD (Sel. 2)"));
-        _tableItemModel->setHorizontalHeader(8, QString("% Expressed (Sel. 1)"));
-        _tableItemModel->setHorizontalHeader(9, QString("% Expressed (Sel. 2)"));
-    }
-
-#pragma omp parallel for schedule(dynamic,1)
-    for (std::ptrdiff_t dimension = 0; dimension < static_cast<std::ptrdiff_t>(numDimensions); ++dimension)
+    catch (...)
     {
-        std::vector<QVariant> dataVector;
-        dataVector.reserve(_totalTableColumns);
-
-        dataVector.push_back(dimensionNames[dimension]);
-        dataVector.push_back(local::fround(meansA[dimension] - meansB[dimension], 3));
-        dataVector.push_back(local::fround(meansA[dimension], 3));
-        dataVector.push_back(local::fround(meansB[dimension], 3));
-        dataVector.push_back(local::fround(mediansA[dimension], 3));
-        dataVector.push_back(local::fround(mediansB[dimension], 3));
-
-        if (_useAdditionalCalculations) {
-            dataVector.push_back(local::fround(SDA[dimension], 3));
-            dataVector.push_back(local::fround(SDB[dimension], 3));
-            dataVector.push_back(local::fround(pctExpressedA[dimension], 3));
-            dataVector.push_back(local::fround(pctExpressedB[dimension], 3));
-        }
-
-        assert(dataVector.size() == _totalTableColumns);
-        _tableItemModel->setRow(dimension, dataVector, Qt::Unchecked, true);
+        result.error = tr("An unknown error occurred while computing differential expression.");
+        throw;
     }
-    _tableItemModel->endModelBuilding();
 
-    progressTask->setProgress(1.0f, tr("Finalizing results"));
-    progressTask->setStatus(mv::Task::Status::Finished);
-    cleanupProgressTask();
-    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-
-    qDebug() << "DifferentialExpressionPlugin: timings (ms)"
-             << "normalization" << normalizationNs / 1e6
-             << "selection reads" << selectionReadNs / 1e6
-             << "remaining statistics" << (tableStartNs - normalizationNs - selectionReadNs) / 1e6
-             << "table" << (elapsed.nsecsElapsed() - tableStartNs) / 1e6;
+    const auto& dimensionNames = points->getDimensionNames();
+    result.dimensionNames.assign(dimensionNames.cbegin(), dimensionNames.cend());
+    result.dimensionStatistics = std::move(dimensionStatistics);
+    result.meansA = std::move(meansA);
+    result.meansB = std::move(meansB);
+    result.mediansA = std::move(mediansA);
+    result.mediansB = std::move(mediansB);
+    result.standardDeviationsA = std::move(SDA);
+    result.standardDeviationsB = std::move(SDB);
+    result.percentagesExpressedA = std::move(pctExpressedA);
+    result.percentagesExpressedB = std::move(pctExpressedB);
+    result.normalizationNanoseconds = normalizationNs;
+    result.selectionReadNanoseconds = selectionReadNs;
+    result.totalNanoseconds = elapsed.nsecsElapsed();
+    reportProgress(1.0f, tr("Preparing results table"));
 }
 
 void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
@@ -1290,7 +1493,7 @@ void DifferentialExpressionPlugin::tableView_clicked(const QModelIndex& index)
                 continue;
 
             const auto points = Dataset<Points>(child);
-            if (points->isFull() && !points->isProxy() &&
+            if (points->isFull() &&
                 points->getNextSourceDataset<Points>() == _points &&
                 points->getProperty(local::expressionOwnerProperty).toString() == owner)
             {
